@@ -30,10 +30,6 @@ const FIXED_CATEGORIES = [
     'ANIMAL'
 ];
 
-// =====================================================
-// VALIDACIÓN CON DATAMUSE
-// =====================================================
-
 async function validateWordWithDatamuse(word) {
     if (!word || word.length < 2) {
         return { valid: false, reason: 'Palabra demasiado corta' };
@@ -58,10 +54,6 @@ async function validateWordWithDatamuse(word) {
         return { valid: false, reason: 'Error de conexión con Datamuse' };
     }
 }
-
-// =====================================================
-// SERVIDOR
-// =====================================================
 
 const games = {};
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -99,7 +91,8 @@ io.on('connection', (socket) => {
             voteResolved: false,
             validationResults: null,
             votesStarted: false,
-            roundFinished: false
+            roundFinished: false,
+            votesProcessed: false
         };
 
         const game = games[gameId];
@@ -187,6 +180,7 @@ io.on('connection', (socket) => {
         game.validationResults = null;
         game.votesStarted = false;
         game.roundFinished = false;
+        game.votesProcessed = false;
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -216,6 +210,7 @@ io.on('connection', (socket) => {
         game.validationResults = null;
         game.votesStarted = false;
         game.roundFinished = false;
+        game.votesProcessed = false;
 
         const availableLetters = LETTERS.split('');
         game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
@@ -392,8 +387,10 @@ io.on('connection', (socket) => {
 
         const allResolved = pendingWords.every(word => game.pendingVotes[word].resolved === true);
         
-        if (allResolved) {
+        if (allResolved && !game.votesProcessed) {
             game.voteResolved = true;
+            game.votesProcessed = true;
+            
             io.to(gameId).emit('allVotesResolved', { success: true });
             io.to(gameId).emit('chatMessage', {
                 player: 'Sistema',
@@ -401,12 +398,12 @@ io.on('connection', (socket) => {
                 system: true
             });
             
-            // Esperar un momento para que el cliente procese el mensaje
+            // CRUCIAL: Esperar un momento y luego finalizar la ronda con votos
             setTimeout(() => {
                 if (!game.roundFinished) {
                     finishRoundWithVotes(gameId);
                 }
-            }, 1500);
+            }, 1000);
         }
     }
 
@@ -504,18 +501,25 @@ io.on('connection', (socket) => {
         return true;
     }
 
+    // =====================================================
+    // FUNCIÓN CRÍTICA: Finalizar ronda con votaciones
+    // =====================================================
     function finishRoundWithVotes(gameId) {
         const game = games[gameId];
         if (!game) return;
         if (game.phase === 'results' || game.roundFinished) return;
 
+        console.log(`📊 Finalizando ronda ${game.roundNumber} con votaciones en sala ${gameId}`);
+        
         game.roundFinished = true;
         game.phase = 'results';
         game.roundActive = false;
         clearInterval(game.timer);
 
+        // Aplicar resultados de votación
         const validationResults = applyVoteResults(game);
         
+        // Calcular resultados finales
         const results = calculateRoundResults(game, validationResults);
         
         for (let result of results) {
@@ -526,6 +530,7 @@ io.on('connection', (socket) => {
             }
         }
 
+        // Emitir resultados
         io.to(gameId).emit('roundResults', {
             results: results,
             letter: game.currentLetter,
@@ -544,6 +549,7 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
+        console.log(`✅ Ronda ${game.roundNumber} finalizada correctamente`);
     }
 
     async function finishRound(gameId) {
@@ -551,6 +557,8 @@ io.on('connection', (socket) => {
         if (!game) return;
         if (game.phase === 'results' || game.roundFinished) return;
 
+        console.log(`📊 Finalizando ronda ${game.roundNumber} en sala ${gameId}`);
+        
         game.phase = 'results';
         game.roundActive = false;
         clearInterval(game.timer);
@@ -561,10 +569,12 @@ io.on('connection', (socket) => {
         const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
         
         if (wordsToVote.length > 0) {
+            console.log(`📋 Iniciando votación para ${wordsToVote.length} palabras en sala ${gameId}`);
             game.pendingVotes = {};
             game.voteResolved = false;
             game.votesStarted = true;
             game.roundFinished = false;
+            game.votesProcessed = false;
             
             wordsToVote.forEach(item => {
                 game.pendingVotes[item.word] = {
@@ -590,6 +600,7 @@ io.on('connection', (socket) => {
             return;
         }
 
+        // Sin votaciones, calcular resultados directamente
         game.roundFinished = true;
         const results = calculateRoundResults(game, validationResults);
         
@@ -618,6 +629,7 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
+        console.log(`✅ Ronda ${game.roundNumber} finalizada correctamente`);
     }
 
     async function validateAllAnswers(game) {
@@ -841,6 +853,7 @@ io.on('connection', (socket) => {
         game.validationResults = null;
         game.votesStarted = false;
         game.roundFinished = false;
+        game.votesProcessed = false;
         clearInterval(game.timer);
 
         io.to(gameId).emit('gameState', getGameState(gameId));
@@ -969,7 +982,8 @@ io.on('connection', (socket) => {
             pendingVotes: game.pendingVotes ? Object.keys(game.pendingVotes).length : 0,
             voteResolved: game.voteResolved,
             votesStarted: game.votesStarted,
-            roundFinished: game.roundFinished
+            roundFinished: game.roundFinished,
+            votesProcessed: game.votesProcessed
         };
     }
 
