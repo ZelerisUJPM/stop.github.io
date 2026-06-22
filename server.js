@@ -30,6 +30,133 @@ const FIXED_CATEGORIES = [
     'ANIMAL'
 ];
 
+// =====================================================
+// VALIDACIÓN ONLINE CON DICCIONARIO
+// =====================================================
+
+// Función para validar una palabra con la API de Diccionario
+async function validateWordWithDictionary(word) {
+    if (!word || word.length < 2) {
+        return { valid: false, reason: 'Palabra demasiado corta' };
+    }
+
+    try {
+        // Intentar con la API de Diccionario (inglés)
+        const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`);
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.length > 0 && data[0].word) {
+                return { valid: true, reason: 'Palabra encontrada en diccionario' };
+            }
+        }
+
+        // Si no se encuentra en inglés, probar con Datamuse (español/inglés)
+        try {
+            const spanishResponse = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=5`);
+            const spanishData = await spanishResponse.json();
+            if (spanishData && spanishData.length > 0) {
+                // Verificar coincidencia exacta
+                const exactMatch = spanishData.some(item => 
+                    item.word && item.word.toUpperCase() === word.toUpperCase()
+                );
+                if (exactMatch) {
+                    return { valid: true, reason: 'Palabra encontrada en Datamuse' };
+                }
+            }
+        } catch (e) {
+            console.log('Error en Datamuse:', e.message);
+        }
+
+        // Verificar si es un nombre propio (primera letra mayúscula)
+        if (word[0] === word[0].toUpperCase() && word.length >= 3) {
+            return { valid: true, reason: 'Nombre propio aceptado' };
+        }
+
+        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
+    } catch (error) {
+        console.error('Error validando palabra:', error);
+        // En caso de error de red, permitir la palabra (para no bloquear el juego)
+        return { valid: true, reason: 'Validación falló, se acepta palabra' };
+    }
+}
+
+// Validación específica por categoría
+async function validateAnswerByCategory(answer, category, letter) {
+    // 1. Verificar que no esté vacío
+    if (!answer || answer.length === 0) {
+        return { valid: false, reason: 'Respuesta vacía' };
+    }
+
+    // 2. Verificar que comience con la letra correcta
+    if (answer[0] !== letter) {
+        return { valid: false, reason: `No comienza con la letra ${letter}` };
+    }
+
+    // 3. Verificar longitud mínima (evitar respuestas de 1 letra como "V")
+    if (answer.length < 2) {
+        return { valid: false, reason: 'La palabra es demasiado corta' };
+    }
+
+    // 4. Verificar si es un nombre propio (categoría NOMBRE)
+    if (category === 'NOMBRE') {
+        // Los nombres propios se aceptan si tienen 2+ letras y primera mayúscula
+        if (answer[0] === answer[0].toUpperCase() && answer.length >= 2) {
+            return { valid: true, reason: 'Nombre propio aceptado' };
+        }
+        // También verificar en diccionario si no tiene mayúscula
+        const dictResult = await validateWordWithDictionary(answer);
+        return dictResult;
+    }
+
+    // 5. Para APELLIDO: aceptar si tiene 3+ letras y primera mayúscula
+    if (category === 'APELLIDO') {
+        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
+            return { valid: true, reason: 'Apellido aceptado' };
+        }
+        const dictResult = await validateWordWithDictionary(answer);
+        return dictResult;
+    }
+
+    // 6. Para PAÍS/CIUDAD: aceptar si tiene 3+ letras y primera mayúscula
+    if (category === 'PAÍS/CIUDAD') {
+        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
+            return { valid: true, reason: 'País/ciudad aceptado' };
+        }
+        // También buscar en diccionario
+        const dictResult = await validateWordWithDictionary(answer);
+        return dictResult;
+    }
+
+    // 7. Para COLOR, FRUTA, ANIMAL, COSA: validar con diccionario
+    if (category === 'COLOR' || category === 'FRUTA' || category === 'ANIMAL' || category === 'COSA') {
+        // Verificar en diccionario
+        const dictResult = await validateWordWithDictionary(answer);
+        if (dictResult.valid) {
+            return { valid: true, reason: 'Palabra válida' };
+        }
+        
+        // Si es un nombre propio, aceptarlo
+        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
+            return { valid: true, reason: 'Nombre propio aceptado' };
+        }
+        
+        // Si tiene 4+ letras, aceptarlo como palabra válida (para evitar falsos negativos)
+        if (answer.length >= 4) {
+            return { valid: true, reason: 'Palabra aceptada (4+ letras)' };
+        }
+        
+        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
+    }
+
+    // Default: validar con diccionario
+    return await validateWordWithDictionary(answer);
+}
+
+// =====================================================
+// RESTO DEL SERVIDOR
+// =====================================================
+
 const games = {};
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -157,7 +284,7 @@ io.on('connection', (socket) => {
         }, 2000);
     });
 
-    function startRound(gameId) {
+    async function startRound(gameId) {
         const game = games[gameId];
         if (!game) return;
 
@@ -268,7 +395,6 @@ io.on('connection', (socket) => {
         }, 1500);
     });
 
-    // --- NUEVO: Anfitrión solicita siguiente ronda ---
     socket.on('nextRound', (data) => {
         const { gameId } = data;
         const game = games[gameId];
@@ -288,10 +414,8 @@ io.on('connection', (socket) => {
         game.waitingForNextRound = false;
         
         if (game.roundNumber >= game.maxRounds) {
-            // Finalizar partida
             finishGame(gameId);
         } else {
-            // Iniciar siguiente ronda
             io.to(gameId).emit('chatMessage', {
                 player: 'Sistema',
                 message: `⏳ Preparando siguiente ronda...`,
@@ -303,7 +427,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- NUEVO: Anfitrión finaliza la partida ---
     socket.on('finishGame', (data) => {
         const { gameId } = data;
         const game = games[gameId];
@@ -362,7 +485,7 @@ io.on('connection', (socket) => {
         return true;
     }
 
-    function finishRound(gameId) {
+    async function finishRound(gameId) {
         const game = games[gameId];
         if (!game) return;
         if (game.phase === 'results') return;
@@ -371,7 +494,8 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         clearInterval(game.timer);
 
-        const results = calculateRoundResults(game);
+        // Calcular resultados con validación online
+        const results = await calculateRoundResults(game);
         
         for (let result of results) {
             const player = game.players.find(p => p.id === result.playerId);
@@ -400,7 +524,7 @@ io.on('connection', (socket) => {
         io.to(gameId).emit('gameState', getGameState(gameId));
     }
 
-    function calculateRoundResults(game) {
+    async function calculateRoundResults(game) {
         const results = [];
         const categories = game.categories;
         const players = game.players.filter(p => p.connected);
@@ -420,7 +544,7 @@ io.on('connection', (socket) => {
             });
         });
 
-        players.forEach(p => {
+        for (let p of players) {
             const playerAnswers = game.answers[p.id];
             if (!playerAnswers) {
                 results.push({
@@ -431,38 +555,71 @@ io.on('connection', (socket) => {
                     stopped: false,
                     totalScore: p.score
                 });
-                return;
+                continue;
             }
 
             let points = 0;
             let answerDetails = {};
             const stopped = playerAnswers.stopped || false;
 
-            categories.forEach(cat => {
+            for (let cat of categories) {
                 const answer = playerAnswers.answers[cat] || '';
+                
+                // --- VALIDACIÓN ONLINE POR CATEGORÍA ---
+                const validation = await validateAnswerByCategory(answer, cat, game.currentLetter);
+                const isValid = validation.valid;
+                
                 const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
-                const isValid = answer.length > 0 && answer[0] === game.currentLetter;
                 
                 if (answer && isValid) {
                     if (isUnique) {
                         points += 1;
-                        answerDetails[cat] = { answer, points: 1, unique: true };
+                        answerDetails[cat] = { 
+                            answer, 
+                            points: 1, 
+                            unique: true,
+                            valid: true,
+                            validated: validation.reason
+                        };
                     } else {
-                        answerDetails[cat] = { answer, points: 0, unique: false, duplicated: true };
+                        answerDetails[cat] = { 
+                            answer, 
+                            points: 0, 
+                            unique: false, 
+                            duplicated: true,
+                            valid: true,
+                            validated: validation.reason
+                        };
                     }
                 } else if (answer) {
-                    answerDetails[cat] = { answer, points: 0, unique: false, invalid: true };
+                    // Respuesta inválida o incorrecta
+                    answerDetails[cat] = { 
+                        answer, 
+                        points: 0, 
+                        unique: false, 
+                        invalid: true,
+                        valid: false,
+                        reason: validation.reason || 'No válida'
+                    };
                 } else {
-                    answerDetails[cat] = { answer: '(vacío)', points: 0, unique: false };
+                    answerDetails[cat] = { 
+                        answer: '(vacío)', 
+                        points: 0, 
+                        unique: false,
+                        valid: false
+                    };
                 }
-            });
+            }
 
             let hasValidAnswers = false;
             for (let cat of categories) {
                 const ans = playerAnswers.answers[cat];
-                if (ans && ans.length > 0 && ans[0] === game.currentLetter) {
-                    hasValidAnswers = true;
-                    break;
+                if (ans) {
+                    const validation = await validateAnswerByCategory(ans, cat, game.currentLetter);
+                    if (validation.valid) {
+                        hasValidAnswers = true;
+                        break;
+                    }
                 }
             }
 
@@ -478,7 +635,7 @@ io.on('connection', (socket) => {
                 stopped: stopped,
                 totalScore: p.score + points
             });
-        });
+        }
 
         return results;
     }
