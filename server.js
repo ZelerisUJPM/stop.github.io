@@ -1,990 +1,1127 @@
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
-const cors = require('cors');
-const path = require('path');
-
-const app = express();
-app.use(cors());
-app.use(express.static('public'));
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-const server = http.createServer(app);
-const io = socketIo(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
-
-const FIXED_CATEGORIES = [
-    'NOMBRE',
-    'APELLIDO',
-    'COSA',
-    'COLOR',
-    'FRUTA',
-    'PAÍS/CIUDAD',
-    'ANIMAL'
-];
-
-// =====================================================
-// VALIDACIÓN CON DATAMUSE
-// =====================================================
-
-async function validateWordWithDatamuse(word) {
-    if (!word || word.length < 2) {
-        return { valid: false, reason: 'Palabra demasiado corta' };
-    }
-
-    try {
-        const response = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=3`);
-        const data = await response.json();
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>STOP Online - Con Votación</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            background: linear-gradient(135deg, #0a0f1e 0%, #1a2a3a 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+            color: #e2e8f0;
+        }
+        .app {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .title {
+            text-align: center;
+            color: #facc15;
+            font-size: 2.2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+            letter-spacing: 3px;
+        }
+        .title i { margin-right: 12px; }
+        .subtitle {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
         
-        if (data && data.length > 0) {
-            const exactMatch = data.some(item => 
-                item.word && item.word.toUpperCase() === word.toUpperCase()
-            );
-            if (exactMatch) {
-                return { valid: true, reason: 'Palabra encontrada en Datamuse' };
+        .status-bar {
+            text-align: center;
+            padding: 10px 16px;
+            border-radius: 40px;
+            background: #1e293b;
+            margin-bottom: 15px;
+            color: #94a3b8;
+            font-weight: bold;
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 0.95rem;
+        }
+        
+        .room-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        .room-controls input {
+            padding: 10px 18px;
+            border-radius: 40px;
+            border: 2px solid #334155;
+            background: #0f172a;
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+            min-width: 150px;
+            text-align: center;
+        }
+        .room-controls input:focus { border-color: #facc15; }
+        
+        .btn {
+            padding: 10px 25px;
+            border-radius: 40px;
+            border: none;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-primary { background: #facc15; color: #0f172a; }
+        .btn-primary:hover { background: #eab308; }
+        .btn-success { background: #4ade80; color: #0f172a; }
+        .btn-success:hover { background: #22c55e; }
+        .btn-danger { background: #f87171; color: #0f172a; }
+        .btn-danger:hover { background: #ef4444; }
+        .btn-secondary { background: #64748b; color: #fff; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-stop { background: #ef4444; color: #fff; font-size: 1.2rem; padding: 12px 35px; }
+        .btn-stop:hover { background: #dc2626; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-host { background: #8b5cf6; color: #fff; }
+        .btn-host:hover { background: #7c3aed; }
+        .btn-vote-yes { background: #4ade80; color: #0f172a; }
+        .btn-vote-yes:hover { background: #22c55e; }
+        .btn-vote-no { background: #f87171; color: #0f172a; }
+        .btn-vote-no:hover { background: #ef4444; }
+        
+        .game-layout {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+        }
+        @media (max-width: 800px) {
+            .game-layout { grid-template-columns: 1fr; }
+        }
+        
+        .main-panel {
+            background: rgba(0,0,0,0.4);
+            border-radius: 24px;
+            padding: 20px;
+            border: 1px solid #334155;
+        }
+        
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .players-list {
+            background: rgba(0,0,0,0.4);
+            border-radius: 24px;
+            padding: 16px 20px;
+            border: 1px solid #334155;
+        }
+        .players-list h3 {
+            color: #facc15;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 8px;
+        }
+        .player-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #1e293b;
+            font-size: 0.9rem;
+        }
+        .player-item .name { color: #e2e8f0; }
+        .player-item .name.host { color: #facc15; }
+        .player-item .score { color: #4ade80; font-weight: bold; }
+        
+        .categories-area {
+            background: rgba(0,0,0,0.4);
+            border-radius: 24px;
+            padding: 16px 20px;
+            border: 1px solid #334155;
+        }
+        .categories-area h3 {
+            color: #facc15;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+        .category-tag {
+            display: inline-block;
+            background: #1e293b;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            margin: 3px 4px 3px 0;
+            color: #facc15;
+            border: 1px solid #facc1533;
+        }
+        
+        .chat-box {
+            background: rgba(0,0,0,0.4);
+            border-radius: 24px;
+            padding: 16px 20px;
+            border: 1px solid #334155;
+            flex: 1;
+            min-height: 180px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-box h3 {
+            color: #facc15;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 200px;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+        .chat-messages .msg {
+            padding: 4px 0;
+            border-bottom: 1px solid #1e293b;
+        }
+        .chat-messages .msg .player { color: #facc15; font-weight: bold; }
+        .chat-messages .msg .system { color: #60a5fa; font-style: italic; }
+        .chat-messages .msg .text { color: #e2e8f0; }
+        .chat-input {
+            display: flex;
+            gap: 8px;
+        }
+        .chat-input input {
+            flex: 1;
+            padding: 8px 16px;
+            border-radius: 40px;
+            border: 2px solid #334155;
+            background: #0f172a;
+            color: #fff;
+            outline: none;
+        }
+        .chat-input input:focus { border-color: #facc15; }
+        .chat-input button { padding: 8px 18px; font-size: 0.85rem; }
+        
+        .game-area { display: none; }
+        .game-area.active { display: block; }
+        
+        .letter-display {
+            text-align: center;
+            font-size: 4rem;
+            font-weight: bold;
+            color: #facc15;
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 20px;
+            margin: 10px 0;
+            border: 2px solid #facc1533;
+        }
+        .letter-display small {
+            font-size: 1rem;
+            color: #94a3b8;
+            display: block;
+        }
+        
+        .answers-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        @media (max-width: 600px) {
+            .answers-grid { grid-template-columns: 1fr; }
+        }
+        .answer-input {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .answer-input label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            font-weight: bold;
+        }
+        .answer-input input {
+            padding: 8px 14px;
+            border-radius: 40px;
+            border: 2px solid #334155;
+            background: #0f172a;
+            color: #fff;
+            outline: none;
+            font-size: 1rem;
+            text-transform: uppercase;
+        }
+        .answer-input input:focus { border-color: #facc15; }
+        .answer-input input:disabled { opacity: 0.5; }
+        .answer-input input.saved { border-color: #4ade80; background: #4ade8011; }
+        
+        .stop-area {
+            text-align: center;
+            margin: 15px 0;
+        }
+        
+        .timer-display {
+            text-align: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #60a5fa;
+            font-family: monospace;
+        }
+        .timer-display.warning { color: #facc15; }
+        .timer-display.danger { color: #f87171; }
+        
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            margin-top: 10px;
+        }
+        .results-table th {
+            color: #94a3b8;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            padding: 6px 4px;
+            border-bottom: 2px solid #334155;
+            text-align: center;
+        }
+        .results-table td {
+            padding: 6px 4px;
+            border-bottom: 1px solid #1e293b;
+            text-align: center;
+        }
+        .results-table .winner-row { background: #facc1522; }
+        .results-table .highlight { color: #facc15; font-weight: bold; }
+        .results-table .points { color: #4ade80; font-weight: bold; }
+        .results-table .stop-badge { color: #f87171; font-weight: bold; }
+        
+        .config-area {
+            margin: 10px 0;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .config-area label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+        .config-area input {
+            padding: 6px 12px;
+            border-radius: 40px;
+            border: 2px solid #334155;
+            background: #0f172a;
+            color: #fff;
+            width: 70px;
+            text-align: center;
+            outline: none;
+        }
+        .config-area input:focus { border-color: #facc15; }
+        
+        .host-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 10px;
+            background: #1e293b;
+            border-radius: 40px;
+        }
+        .host-controls .btn { flex: 1; min-width: 120px; }
+        .host-controls-label {
+            color: #94a3b8;
+            font-size: 0.7rem;
+            text-align: center;
+            width: 100%;
+        }
+        
+        .voting-area {
+            background: #0f172a;
+            border-radius: 20px;
+            padding: 20px;
+            margin: 15px 0;
+            border: 2px solid #facc15;
+        }
+        .voting-area h3 {
+            color: #facc15;
+            margin-bottom: 10px;
+        }
+        .vote-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #1e293b;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .vote-item .word {
+            color: #e2e8f0;
+            font-weight: bold;
+        }
+        .vote-item .category {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        .vote-item .vote-btns {
+            display: flex;
+            gap: 8px;
+        }
+        .vote-item .vote-btns button {
+            padding: 4px 14px;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+        }
+        .vote-item .vote-btns .yes { background: #4ade80; color: #0f172a; }
+        .vote-item .vote-btns .no { background: #f87171; color: #0f172a; }
+        .vote-item .vote-btns .yes.selected { background: #22c55e; box-shadow: 0 0 10px #4ade80; }
+        .vote-item .vote-btns .no.selected { background: #dc2626; box-shadow: 0 0 10px #f87171; }
+        .vote-item .vote-btns button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .vote-progress {
+            color: #94a3b8;
+            font-size: 0.7rem;
+        }
+        
+        .hidden { display: none !important; }
+        .flex-center { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+        
+        .categories-fixed {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .categories-fixed .cat {
+            background: #facc1533;
+            color: #facc15;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            border: 1px solid #facc1555;
+        }
+        
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            overflow: hidden;
+        }
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            opacity: 0;
+            animation: confettiFall linear forwards;
+        }
+        @keyframes confettiFall {
+            0% { opacity: 1; transform: translateY(-20px) rotate(0deg); }
+            100% { opacity: 0; transform: translateY(105vh) rotate(720deg); }
+        }
+        
+        @media (max-width: 600px) {
+            .title { font-size: 1.5rem; }
+            .letter-display { font-size: 3rem; }
+            .host-controls .btn { min-width: 80px; font-size: 0.8rem; padding: 8px 12px; }
+            .vote-item { flex-wrap: wrap; gap: 8px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app">
+    <div class="title"><i class="fas fa-stop-circle"></i> STOP Online</div>
+    <div class="subtitle">📋 NOMBRE · APELLIDO · COSA · COLOR · FRUTA · PAÍS/CIUDAD · ANIMAL</div>
+    
+    <div class="status-bar" id="statusBar">
+        <span class="waiting">🔌 Conéctate al servidor</span>
+    </div>
+
+    <div class="room-controls">
+        <input type="text" id="roomInput" placeholder="Código de sala" value="STOP" maxlength="20">
+        <button class="btn btn-success" id="createBtn"><i class="fas fa-plus"></i> Crear Sala</button>
+        <button class="btn btn-primary" id="joinBtn"><i class="fas fa-sign-in-alt"></i> Unirse</button>
+    </div>
+
+    <div class="game-layout">
+        <div class="main-panel">
+            <div id="gameArea" class="game-area">
+                <div id="configArea" class="config-area">
+                    <label>Rondas: <input type="number" id="maxRoundsInput" value="5" min="1" max="20"></label>
+                    <label>Tiempo: <input type="number" id="timeLimitInput" value="60" min="20" max="180"></label>
+                    <button class="btn btn-secondary" id="applyConfigBtn">Aplicar</button>
+                </div>
+
+                <div class="letter-display">
+                    <small>Letra</small>
+                    <span id="currentLetter">?</span>
+                </div>
+
+                <div class="timer-display" id="timerDisplay">⏱️ 0s</div>
+
+                <div id="answersContainer">
+                    <div class="answers-grid" id="answersGrid"></div>
+                </div>
+
+                <div class="stop-area" id="stopArea">
+                    <button class="btn btn-stop" id="stopBtn" disabled>
+                        <i class="fas fa-hand-paper"></i> STOP
+                    </button>
+                </div>
+
+                <!-- Área de votación -->
+                <div id="votingArea" class="voting-area hidden">
+                    <h3>📋 Votación de palabras</h3>
+                    <div id="votingList"></div>
+                    <div id="votingStatus" class="vote-progress" style="margin-top:10px;"></div>
+                </div>
+
+                <div id="resultsContainer" class="hidden">
+                    <h3 style="color:#facc15;margin-top:10px;">📊 Resultados</h3>
+                    <div id="resultsContent"></div>
+                    
+                    <div id="hostControls" class="host-controls hidden">
+                        <div class="host-controls-label">👑 Controles del Anfitrión</div>
+                        <button class="btn btn-success" id="nextRoundBtn"><i class="fas fa-forward"></i> Siguiente Ronda</button>
+                        <button class="btn btn-danger" id="finishGameBtn"><i class="fas fa-flag-checkered"></i> Finalizar Partida</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="waitingArea">
+                <div style="text-align:center;padding:30px 0;color:#94a3b8;">
+                    <i class="fas fa-users" style="font-size:3rem;color:#facc15;"></i>
+                    <p style="margin-top:15px;">Esperando a que el anfitrión inicie la partida</p>
+                    <p style="font-size:0.8rem;">Mínimo 2 jugadores</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="side-panel">
+            <div class="players-list">
+                <h3>👥 Jugadores <span id="playerCount">0</span>/<span id="maxPlayersDisplay">8</span></h3>
+                <div id="playersList"></div>
+            </div>
+
+            <div class="categories-area">
+                <h3>📋 Categorías</h3>
+                <div class="categories-fixed">
+                    <span class="cat">NOMBRE</span>
+                    <span class="cat">APELLIDO</span>
+                    <span class="cat">COSA</span>
+                    <span class="cat">COLOR</span>
+                    <span class="cat">FRUTA</span>
+                    <span class="cat">PAÍS/CIUDAD</span>
+                    <span class="cat">ANIMAL</span>
+                </div>
+            </div>
+
+            <div class="chat-box">
+                <h3>💬 Chat</h3>
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input">
+                    <input type="text" id="chatInput" placeholder="Escribe un mensaje..." maxlength="100">
+                    <button class="btn btn-primary" id="chatSendBtn" style="padding:6px 16px;font-size:0.8rem;">Enviar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="confetti-container" id="confettiContainer"></div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    (function() {
+        // ---------- DOM ELEMENTS ----------
+        const statusBar = document.getElementById('statusBar');
+        const roomInput = document.getElementById('roomInput');
+        const createBtn = document.getElementById('createBtn');
+        const joinBtn = document.getElementById('joinBtn');
+        
+        const gameArea = document.getElementById('gameArea');
+        const waitingArea = document.getElementById('waitingArea');
+        const playersList = document.getElementById('playersList');
+        const playerCount = document.getElementById('playerCount');
+        const maxPlayersDisplay = document.getElementById('maxPlayersDisplay');
+        
+        const currentLetter = document.getElementById('currentLetter');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const answersGrid = document.getElementById('answersGrid');
+        const stopBtn = document.getElementById('stopBtn');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultsContent = document.getElementById('resultsContent');
+        const hostControls = document.getElementById('hostControls');
+        const nextRoundBtn = document.getElementById('nextRoundBtn');
+        const finishGameBtn = document.getElementById('finishGameBtn');
+        
+        const votingArea = document.getElementById('votingArea');
+        const votingList = document.getElementById('votingList');
+        const votingStatus = document.getElementById('votingStatus');
+        
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const chatSendBtn = document.getElementById('chatSendBtn');
+        
+        const maxRoundsInput = document.getElementById('maxRoundsInput');
+        const timeLimitInput = document.getElementById('timeLimitInput');
+        const applyConfigBtn = document.getElementById('applyConfigBtn');
+        
+        const confettiContainer = document.getElementById('confettiContainer');
+
+        const CATEGORIES = ['NOMBRE', 'APELLIDO', 'COSA', 'COLOR', 'FRUTA', 'PAÍS/CIUDAD', 'ANIMAL'];
+
+        // ---------- ESTADO ----------
+        let socket = null;
+        let gameId = '';
+        let playerName = '';
+        let connected = false;
+        let gameState = null;
+        let isHost = false;
+        let roundActive = false;
+        let currentAnswers = {};
+        let myVotes = {};
+        let votingActive = false;
+
+        // ---------- CONFETI ----------
+        function launchConfetti() {
+            const colors = ['#facc15', '#4ade80', '#f87171', '#60a5fa', '#c084fc', '#fb923c', '#f472b6', '#22d3ee'];
+            const container = confettiContainer;
+            container.innerHTML = '';
+            
+            for (let i = 0; i < 150; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.top = '-10px';
+                confetti.style.width = (Math.random() * 8 + 4) + 'px';
+                confetti.style.height = (Math.random() * 8 + 4) + 'px';
+                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                confetti.style.animationDelay = (Math.random() * 2) + 's';
+                confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+                container.appendChild(confetti);
             }
-        }
-        
-        return { valid: false, reason: 'Palabra no encontrada en Datamuse' };
-    } catch (error) {
-        console.error('Error en Datamuse:', error);
-        return { valid: false, reason: 'Error de conexión con Datamuse' };
-    }
-}
-
-// =====================================================
-// SERVIDOR
-// =====================================================
-
-const games = {};
-const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-
-io.on('connection', (socket) => {
-    console.log(`🟢 Usuario conectado: ${socket.id}`);
-
-    socket.on('createGame', (data) => {
-        const { gameId, playerName, maxPlayers } = data;
-        
-        if (games[gameId]) {
-            socket.emit('error', 'Ya existe una sala con ese código');
-            return;
-        }
-
-        games[gameId] = {
-            players: [],
-            maxPlayers: maxPlayers || 8,
-            categories: [...FIXED_CATEGORIES],
-            currentLetter: '',
-            round: 0,
-            maxRounds: 5,
-            phase: 'waiting',
-            answers: {},
-            stopPlayer: null,
-            roundActive: false,
-            timer: null,
-            timeLimit: 60,
-            timeLeft: 60,
-            host: socket.id,
-            gameStarted: false,
-            roundNumber: 0,
-            waitingForNextRound: false,
-            pendingVotes: {},
-            voteResolved: false,
-            validationResults: null,
-            votesStarted: false
-        };
-
-        const game = games[gameId];
-        game.players.push({
-            id: socket.id,
-            name: playerName || 'Jugador',
-            score: 0,
-            isHost: true,
-            connected: true
-        });
-
-        socket.join(gameId);
-        socket.emit('gameCreated', { gameId });
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('playersUpdate', getPlayersInfo(gameId));
-        
-        console.log(`🏠 Sala ${gameId} creada por ${playerName}`);
-    });
-
-    socket.on('joinGame', (data) => {
-        const { gameId, playerName } = data;
-        const game = games[gameId];
-        
-        if (!game) {
-            socket.emit('error', 'La sala no existe');
-            return;
-        }
-
-        if (game.players.length >= game.maxPlayers) {
-            socket.emit('error', 'La sala está llena');
-            return;
-        }
-
-        if (game.gameStarted) {
-            socket.emit('error', 'La partida ya ha comenzado');
-            return;
-        }
-
-        const existingPlayer = game.players.find(p => p.id === socket.id);
-        if (existingPlayer) {
-            existingPlayer.connected = true;
-            existingPlayer.name = playerName || existingPlayer.name;
-        } else {
-            game.players.push({
-                id: socket.id,
-                name: playerName || 'Jugador',
-                score: 0,
-                isHost: false,
-                connected: true
-            });
-        }
-
-        socket.join(gameId);
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('playersUpdate', getPlayersInfo(gameId));
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `${playerName || 'Jugador'} se ha unido a la sala`,
-            system: true
-        });
-    });
-
-    socket.on('startGame', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player || !player.isHost) {
-            socket.emit('error', 'Solo el anfitrión puede iniciar la partida');
-            return;
-        }
-
-        if (game.players.length < 2) {
-            socket.emit('error', 'Se necesitan al menos 2 jugadores');
-            return;
-        }
-
-        game.gameStarted = true;
-        game.roundNumber = 0;
-        game.players.forEach(p => p.score = 0);
-        game.waitingForNextRound = false;
-        game.pendingVotes = {};
-        game.voteResolved = false;
-        game.validationResults = null;
-        game.votesStarted = false;
-        
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🎮 ¡La partida ha comenzado!`,
-            system: true
-        });
-
-        setTimeout(() => {
-            startRound(gameId);
-        }, 2000);
-    });
-
-    async function startRound(gameId) {
-        const game = games[gameId];
-        if (!game) return;
-
-        game.roundNumber++;
-        game.phase = 'playing';
-        game.roundActive = true;
-        game.answers = {};
-        game.stopPlayer = null;
-        game.timeLeft = game.timeLimit || 60;
-        game.waitingForNextRound = false;
-        game.pendingVotes = {};
-        game.voteResolved = false;
-        game.validationResults = null;
-        game.votesStarted = false;
-
-        const availableLetters = LETTERS.split('');
-        game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
-
-        game.players.forEach(p => {
-            game.answers[p.id] = {
-                playerName: p.name,
-                answers: {},
-                stopped: false,
-                stoppedAt: null
-            };
-        });
-
-        io.to(gameId).emit('roundStarted', {
-            round: game.roundNumber,
-            letter: game.currentLetter,
-            categories: game.categories,
-            timeLimit: game.timeLimit
-        });
-        
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🔤 Ronda ${game.roundNumber} - Letra: ${game.currentLetter}`,
-            system: true
-        });
-
-        game.timer = setInterval(() => {
-            game.timeLeft--;
-            io.to(gameId).emit('timerUpdate', { timeLeft: game.timeLeft });
             
-            if (game.timeLeft <= 0) {
-                clearInterval(game.timer);
-                finishRound(gameId);
-            }
-        }, 1000);
-    }
-
-    socket.on('sendAnswer', (data) => {
-        const { gameId, category, answer } = data;
-        const game = games[gameId];
-        if (!game) return;
-        if (game.phase !== 'playing' || !game.roundActive) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player) return;
-
-        const playerAnswers = game.answers[player.id];
-        if (!playerAnswers || playerAnswers.stopped) return;
-
-        playerAnswers.answers[category] = answer.trim().toUpperCase();
-        socket.emit('answerSaved', { category, answer });
-        
-        const allAnswered = checkAllAnswered(game);
-        if (allAnswered) {
-            clearInterval(game.timer);
-            finishRound(gameId);
-        }
-    });
-
-    socket.on('sayStop', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-        if (game.phase !== 'playing' || !game.roundActive) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player) return;
-
-        const playerAnswers = game.answers[player.id];
-        if (playerAnswers.stopped) return;
-
-        const hasAnswers = Object.keys(playerAnswers.answers).length > 0;
-        if (!hasAnswers) {
-            socket.emit('error', 'Debes tener al menos una respuesta para decir STOP');
-            return;
-        }
-
-        playerAnswers.stopped = true;
-        playerAnswers.stoppedAt = Date.now();
-        game.stopPlayer = player.id;
-
-        io.to(gameId).emit('playerStopped', {
-            playerName: player.name,
-            playerId: player.id
-        });
-        
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🛑 ${player.name} ha dicho STOP!`,
-            system: true
-        });
-
-        clearInterval(game.timer);
-        
-        setTimeout(() => {
-            finishRound(gameId);
-        }, 1500);
-    });
-
-    // =====================================================
-    // VOTACIÓN
-    // =====================================================
-
-    socket.on('voteWord', (data) => {
-        const { gameId, playerId, word, category, vote } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        if (!game.pendingVotes[word]) {
-            game.pendingVotes[word] = {
-                category: category,
-                votes: {},
-                total: 0,
-                approved: false,
-                resolved: false
-            };
-        }
-
-        const voteData = game.pendingVotes[word];
-        if (voteData.resolved) return;
-
-        if (!voteData.votes[playerId]) {
-            voteData.votes[playerId] = vote;
-            voteData.total++;
-        } else {
-            voteData.votes[playerId] = vote;
-        }
-
-        const votesFor = Object.values(voteData.votes).filter(v => v === true).length;
-        const votesAgainst = Object.values(voteData.votes).filter(v => v === false).length;
-        const totalVotes = Object.keys(voteData.votes).length;
-        const activePlayers = game.players.filter(p => p.connected).length;
-
-        const allVoted = totalVotes >= activePlayers;
-        const majorityReached = votesFor >= Math.ceil(activePlayers * 2 / 3);
-        
-        if (allVoted || majorityReached) {
-            voteData.resolved = true;
-            voteData.approved = votesFor > votesAgainst;
-            
-            io.to(gameId).emit('voteResult', {
-                word: word,
-                category: category,
-                approved: voteData.approved,
-                votesFor: votesFor,
-                votesAgainst: votesAgainst
-            });
-            
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: `📊 Votación para "${word}": ${votesFor} a favor, ${votesAgainst} en contra - ${voteData.approved ? '✅ APROBADA' : '❌ RECHAZADA'}`,
-                system: true
-            });
-
-            checkAllVotesResolved(gameId);
-        } else {
-            io.to(gameId).emit('voteProgress', {
-                word: word,
-                votesFor: votesFor,
-                votesAgainst: votesAgainst,
-                total: totalVotes,
-                remaining: activePlayers - totalVotes
-            });
-        }
-    });
-
-    function checkAllVotesResolved(gameId) {
-        const game = games[gameId];
-        if (!game) return;
-
-        const pendingWords = Object.keys(game.pendingVotes);
-        if (pendingWords.length === 0) return;
-
-        const allResolved = pendingWords.every(word => game.pendingVotes[word].resolved === true);
-        
-        if (allResolved) {
-            game.voteResolved = true;
-            io.to(gameId).emit('allVotesResolved', { success: true });
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: '✅ Todas las votaciones han sido resueltas. Calculando resultados...',
-                system: true
-            });
-            
-            // Ejecutar finishRoundWithVotes después de un breve retraso
             setTimeout(() => {
-                finishRoundWithVotes(gameId);
-            }, 1000);
-        }
-    }
-
-    // =====================================================
-    // FUNCIONES AUXILIARES
-    // =====================================================
-
-    socket.on('nextRound', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player || !player.isHost) {
-            socket.emit('error', 'Solo el anfitrión puede avanzar');
-            return;
+                container.innerHTML = '';
+            }, 5000);
         }
 
-        if (game.phase !== 'results') {
-            socket.emit('error', 'No hay resultados para avanzar');
-            return;
+        // ---------- FUNCIONES UI ----------
+        function updateStatus(message, type) {
+            const icons = { 'connected': '🟢', 'waiting': '🟡', 'error': '🔴', 'playing': '🎮', 'ready': '🎯' };
+            statusBar.innerHTML = `${icons[type] || '📌'} ${message}`;
+            statusBar.style.color = type === 'error' ? '#f87171' : type === 'connected' ? '#4ade80' : '#94a3b8';
         }
 
-        game.waitingForNextRound = false;
-        
-        if (game.roundNumber >= game.maxRounds) {
-            finishGame(gameId);
-        } else {
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: `⏳ Preparando siguiente ronda...`,
-                system: true
-            });
-            setTimeout(() => {
-                startRound(gameId);
-            }, 1500);
-        }
-    });
-
-    socket.on('finishGame', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player || !player.isHost) {
-            socket.emit('error', 'Solo el anfitrión puede finalizar');
-            return;
-        }
-
-        finishGame(gameId);
-    });
-
-    function finishGame(gameId) {
-        const game = games[gameId];
-        if (!game) return;
-
-        clearInterval(game.timer);
-        game.phase = 'finished';
-        game.gameStarted = false;
-        game.roundActive = false;
-
-        const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
-        
-        io.to(gameId).emit('gameFinished', {
-            winner: winner,
-            players: game.players.map(p => ({
-                name: p.name,
-                score: p.score
-            }))
-        });
-        
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🏆 ¡${winner.name} ha ganado la partida con ${winner.score} puntos!`,
-            system: true
-        });
-        
-        io.to(gameId).emit('gameState', getGameState(gameId));
-    }
-
-    function checkAllAnswered(game) {
-        const categories = game.categories;
-        const activePlayers = game.players.filter(p => p.connected);
-        
-        for (let player of activePlayers) {
-            const playerAnswers = game.answers[player.id];
-            if (!playerAnswers || playerAnswers.stopped) continue;
-            
-            const answeredCount = Object.keys(playerAnswers.answers).length;
-            if (answeredCount < categories.length) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // ---------- NUEVA FUNCIÓN: Finalizar ronda con votaciones ----------
-    function finishRoundWithVotes(gameId) {
-        const game = games[gameId];
-        if (!game) return;
-        if (game.phase === 'results') return;
-
-        game.phase = 'results';
-        game.roundActive = false;
-        clearInterval(game.timer);
-
-        // Aplicar resultados de votación
-        const validationResults = applyVoteResults(game);
-        
-        // Calcular resultados finales
-        const results = calculateRoundResults(game, validationResults);
-        
-        for (let result of results) {
-            const player = game.players.find(p => p.id === result.playerId);
-            if (player) {
-                player.score += result.points;
-                result.totalScore = player.score;
-            }
-        }
-
-        io.to(gameId).emit('roundResults', {
-            results: results,
-            letter: game.currentLetter,
-            categories: game.categories,
-            stopPlayer: game.stopPlayer,
-            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
-            roundNumber: game.roundNumber,
-            maxRounds: game.maxRounds,
-            votesApplied: true
-        });
-
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `📊 ¡Ronda ${game.roundNumber} finalizada con votaciones!`,
-            system: true
-        });
-
-        io.to(gameId).emit('gameState', getGameState(gameId));
-    }
-
-    // ---------- FUNCIÓN CORREGIDA: finishRound ----------
-    async function finishRound(gameId) {
-        const game = games[gameId];
-        if (!game) return;
-        if (game.phase === 'results') return;
-
-        game.phase = 'results';
-        game.roundActive = false;
-        clearInterval(game.timer);
-
-        // 1. Validar con Datamuse y preparar votaciones
-        const validationResults = await validateAllAnswers(game);
-        game.validationResults = validationResults;
-        
-        // 2. Si hay palabras que necesitan votación, iniciar votación
-        const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
-        
-        if (wordsToVote.length > 0) {
-            // Iniciar votación
-            game.pendingVotes = {};
-            game.voteResolved = false;
-            game.votesStarted = true;
-            
-            wordsToVote.forEach(item => {
-                game.pendingVotes[item.word] = {
-                    category: item.category,
-                    votes: {},
-                    total: 0,
-                    approved: false,
-                    resolved: false
-                };
-            });
-            
-            io.to(gameId).emit('startVoting', {
-                words: wordsToVote,
-                message: '📋 Algunas palabras no se encontraron en Datamuse. ¡Voten si son válidas!'
-            });
-            
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas en Datamuse`,
-                system: true
-            });
-            
-            // No continuar hasta que terminen las votaciones (se maneja en checkAllVotesResolved)
-            return;
-        }
-
-        // 3. Si no hay votaciones, calcular resultados directamente
-        const results = calculateRoundResults(game, validationResults);
-        
-        for (let result of results) {
-            const player = game.players.find(p => p.id === result.playerId);
-            if (player) {
-                player.score += result.points;
-                result.totalScore = player.score;
-            }
-        }
-
-        io.to(gameId).emit('roundResults', {
-            results: results,
-            letter: game.currentLetter,
-            categories: game.categories,
-            stopPlayer: game.stopPlayer,
-            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
-            roundNumber: game.roundNumber,
-            maxRounds: game.maxRounds
-        });
-
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `📊 ¡Ronda ${game.roundNumber} finalizada!`,
-            system: true
-        });
-
-        io.to(gameId).emit('gameState', getGameState(gameId));
-    }
-
-    async function validateAllAnswers(game) {
-        const results = {};
-        const players = game.players.filter(p => p.connected);
-        
-        for (let player of players) {
-            const playerAnswers = game.answers[player.id];
-            if (!playerAnswers) continue;
-            
-            for (let cat of game.categories) {
-                const answer = playerAnswers.answers[cat] || '';
-                if (answer.length === 0) {
-                    results[`${player.id}_${cat}`] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: false,
-                        needsVote: false
-                    };
-                    continue;
-                }
-                
-                const validation = await validateWordWithDatamuse(answer);
-                results[`${player.id}_${cat}`] = {
-                    playerId: player.id,
-                    category: cat,
-                    word: answer,
-                    valid: validation.valid,
-                    needsVote: !validation.valid,
-                    reason: validation.reason || ''
-                };
-            }
-        }
-        
-        return results;
-    }
-
-    function applyVoteResults(game) {
-        const results = {};
-        const players = game.players.filter(p => p.connected);
-        
-        for (let player of players) {
-            const playerAnswers = game.answers[player.id];
-            if (!playerAnswers) continue;
-            
-            for (let cat of game.categories) {
-                const answer = playerAnswers.answers[cat] || '';
-                const key = `${player.id}_${cat}`;
-                
-                const voteData = game.pendingVotes[answer];
-                if (voteData && voteData.resolved) {
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: voteData.approved,
-                        needsVote: false,
-                        voted: true,
-                        approved: voteData.approved
-                    };
-                } else if (answer.length > 0) {
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: true,
-                        needsVote: false
-                    };
-                } else {
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: false,
-                        needsVote: false
-                    };
-                }
-            }
-        }
-        
-        return results;
-    }
-
-    function calculateRoundResults(game, validationResults) {
-        const results = [];
-        const players = game.players.filter(p => p.connected);
-        const categories = game.categories;
-        
-        const categoryAnswers = {};
-        categories.forEach(cat => {
-            categoryAnswers[cat] = {};
+        function renderPlayers(players) {
+            playersList.innerHTML = '';
             players.forEach(p => {
-                const playerAnswers = game.answers[p.id];
-                if (playerAnswers && playerAnswers.answers[cat]) {
-                    const answer = playerAnswers.answers[cat];
-                    if (!categoryAnswers[cat][answer]) {
-                        categoryAnswers[cat][answer] = [];
-                    }
-                    categoryAnswers[cat][answer].push(p.id);
-                }
+                const div = document.createElement('div');
+                div.className = 'player-item';
+                div.innerHTML = `
+                    <span class="name ${p.isHost ? 'host' : ''}">${p.isHost ? '👑 ' : ''}${p.name}</span>
+                    <span><span class="score">${p.score || 0}</span> pts</span>
+                `;
+                playersList.appendChild(div);
             });
-        });
+            playerCount.textContent = players.filter(p => p.connected).length;
+        }
 
-        players.forEach(p => {
-            const playerAnswers = game.answers[p.id];
-            if (!playerAnswers) {
-                results.push({
-                    playerId: p.id,
-                    playerName: p.name,
-                    answers: {},
-                    points: 0,
-                    stopped: false,
-                    totalScore: p.score
-                });
+        function renderAnswers(categories, letter, roundActive, answers) {
+            answersGrid.innerHTML = '';
+            if (!roundActive || !categories) {
+                answersGrid.innerHTML = '<div style="color:#64748b;text-align:center;padding:20px;">Esperando ronda...</div>';
                 return;
             }
-
-            let points = 0;
-            let answerDetails = {};
-            const stopped = playerAnswers.stopped || false;
-
+            
             categories.forEach(cat => {
-                const answer = playerAnswers.answers[cat] || '';
-                const key = `${p.id}_${cat}`;
-                const validation = validationResults ? validationResults[key] : null;
-                const isValid = validation ? validation.valid : (answer.length > 0);
+                const div = document.createElement('div');
+                div.className = 'answer-input';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.id = `answer_${cat}`;
+                input.placeholder = '...';
+                input.maxLength = 30;
+                input.autocomplete = 'off';
+                input.disabled = !roundActive;
                 
-                const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
-                const startsWithLetter = answer.length > 0 && answer[0] === game.currentLetter;
-                
-                if (answer && isValid && startsWithLetter) {
-                    if (isUnique) {
-                        points += 1;
-                        answerDetails[cat] = { 
-                            answer, 
-                            points: 1, 
-                            unique: true,
-                            valid: true,
-                            voted: validation?.voted || false
-                        };
-                    } else {
-                        answerDetails[cat] = { 
-                            answer, 
-                            points: 0, 
-                            unique: false, 
-                            duplicated: true,
-                            valid: true
-                        };
-                    }
-                } else if (answer) {
-                    answerDetails[cat] = { 
-                        answer, 
-                        points: 0, 
-                        unique: false, 
-                        invalid: true,
-                        valid: false,
-                        reason: validation?.reason || 'No válida'
-                    };
-                } else {
-                    answerDetails[cat] = { 
-                        answer: '(vacío)', 
-                        points: 0, 
-                        unique: false,
-                        valid: false
-                    };
+                if (answers && answers[cat]) {
+                    input.value = answers[cat];
+                    input.classList.add('saved');
                 }
-            });
-
-            let hasValidAnswers = false;
-            for (let cat of categories) {
-                const ans = playerAnswers.answers[cat];
-                if (ans) {
-                    const key = `${p.id}_${cat}`;
-                    const validation = validationResults ? validationResults[key] : null;
-                    if (validation ? validation.valid : (ans.length > 0 && ans[0] === game.currentLetter)) {
-                        hasValidAnswers = true;
-                        break;
-                    }
-                }
-            }
-
-            if (stopped && hasValidAnswers) {
-                points += 2;
-            }
-
-            results.push({
-                playerId: p.id,
-                playerName: p.name,
-                answers: answerDetails,
-                points: points,
-                stopped: stopped,
-                totalScore: p.score + points
-            });
-        });
-
-        return results;
-    }
-
-    socket.on('resetGame', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player || !player.isHost) {
-            socket.emit('error', 'Solo el anfitrión puede reiniciar');
-            return;
-        }
-
-        game.gameStarted = false;
-        game.phase = 'waiting';
-        game.roundNumber = 0;
-        game.players.forEach(p => p.score = 0);
-        game.answers = {};
-        game.stopPlayer = null;
-        game.roundActive = false;
-        game.waitingForNextRound = false;
-        game.pendingVotes = {};
-        game.voteResolved = false;
-        game.validationResults = null;
-        game.votesStarted = false;
-        clearInterval(game.timer);
-
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('gameReset', { success: true });
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🔄 Partida reiniciada por el anfitrión`,
-            system: true
-        });
-    });
-
-    socket.on('configGame', (data) => {
-        const { gameId, maxRounds, timeLimit } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player || !player.isHost) {
-            socket.emit('error', 'Solo el anfitrión puede configurar');
-            return;
-        }
-
-        if (game.gameStarted) {
-            socket.emit('error', 'No se puede configurar después de comenzar');
-            return;
-        }
-
-        if (maxRounds && maxRounds >= 1 && maxRounds <= 20) {
-            game.maxRounds = maxRounds;
-        }
-        if (timeLimit && timeLimit >= 20 && timeLimit <= 180) {
-            game.timeLimit = timeLimit;
-        }
-
-        io.to(gameId).emit('gameState', getGameState(gameId));
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `⚙️ Configuración: ${game.maxRounds} rondas, ${game.timeLimit}s`,
-            system: true
-        });
-    });
-
-    socket.on('chatMessage', (data) => {
-        const { gameId, message } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        const player = game.players.find(p => p.id === socket.id);
-        if (!player) return;
-
-        io.to(gameId).emit('chatMessage', {
-            player: player.name,
-            message: message,
-            system: false,
-            timestamp: Date.now()
-        });
-    });
-
-    socket.on('disconnect', () => {
-        console.log(`🔴 Usuario desconectado: ${socket.id}`);
-        
-        for (const [gameId, game] of Object.entries(games)) {
-            const playerIndex = game.players.findIndex(p => p.id === socket.id);
-            if (playerIndex !== -1) {
-                const player = game.players[playerIndex];
-                game.players[playerIndex].connected = false;
                 
-                io.to(gameId).emit('playersUpdate', getPlayersInfo(gameId));
-                io.to(gameId).emit('chatMessage', {
-                    player: 'Sistema',
-                    message: `⚠️ ${player.name} se ha desconectado`,
-                    system: true
+                input.addEventListener('blur', () => {
+                    const val = input.value.trim().toUpperCase();
+                    if (val.length > 0 && roundActive) {
+                        socket.emit('sendAnswer', { gameId, category: cat, answer: val });
+                        input.classList.add('saved');
+                        input.style.borderColor = '#4ade80';
+                    }
                 });
+                
+                div.innerHTML = `<label for="answer_${cat}">${cat}</label>`;
+                div.appendChild(input);
+                answersGrid.appendChild(div);
+            });
+        }
 
-                if (player.isHost) {
-                    const newHost = game.players.find(p => p.id !== socket.id && p.connected);
-                    if (newHost) {
-                        newHost.isHost = true;
-                        game.host = newHost.id;
-                        io.to(gameId).emit('chatMessage', {
-                            player: 'Sistema',
-                            message: `👑 ${newHost.name} es ahora el anfitrión`,
-                            system: true
-                        });
+        function renderResults(results, letter, categories, roundNumber, maxRounds) {
+            resultsContainer.classList.remove('hidden');
+            
+            if (isHost) {
+                hostControls.classList.remove('hidden');
+                if (roundNumber >= maxRounds) {
+                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Ver Resultados Finales';
+                } else {
+                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Siguiente Ronda';
+                }
+            } else {
+                hostControls.classList.add('hidden');
+            }
+            
+            let html = `<div style="color:#94a3b8;font-size:0.8rem;margin-bottom:8px;">
+                Ronda ${roundNumber}/${maxRounds} · Letra: <strong style="color:#facc15;">${letter}</strong>
+            </div>`;
+            html += `<table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Jugador</th>
+                        ${categories.map(c => `<th>${c}</th>`).join('')}
+                        <th>Pts</th>
+                        <th>STOP</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+            
+            const sortedResults = [...results].sort((a, b) => b.points - a.points);
+            
+            sortedResults.forEach((r, index) => {
+                const isWinner = index === 0 && r.points > 0;
+                html += `<tr class="${isWinner ? 'winner-row' : ''}">
+                    <td><strong>${r.playerName}</strong></td>`;
+                categories.forEach(cat => {
+                    const ans = r.answers[cat];
+                    if (ans) {
+                        let color = '#94a3b8';
+                        let extra = '';
+                        let title = '';
+                        if (ans.unique) { color = '#4ade80'; extra = ' ✅'; }
+                        else if (ans.duplicated) { color = '#f87171'; extra = ' 🔄'; }
+                        else if (ans.invalid) { color = '#f87171'; extra = ' ❌'; title = ans.reason || ''; }
+                        html += `<td style="color:${color};font-size:0.75rem;" title="${title}">${ans.answer}${extra}</td>`;
                     } else {
-                        delete games[gameId];
-                        console.log(`🗑️ Sala ${gameId} eliminada`);
-                        continue;
+                        html += `<td style="color:#64748b;">-</td>`;
                     }
-                }
+                });
+                html += `<td class="points">${r.points}</td>`;
+                html += `<td>${r.stopped ? '🛑' : '-'}</td>`;
+                html += `</tr>`;
+            });
+            
+            html += `</tbody></table>`;
+            
+            html += `<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:16px;">
+                <div style="color:#94a3b8;font-size:0.7rem;text-align:center;">🏆 Clasificación actual</div>`;
+            const sortedScores = [...results].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+            sortedScores.forEach((r, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                html += `<div style="display:flex;justify-content:space-between;padding:3px 8px;border-bottom:1px solid #1e293b;font-size:0.8rem;">
+                    <span>${medal} ${r.playerName}</span>
+                    <span style="color:#4ade80;font-weight:bold;">${r.totalScore || 0} pts</span>
+                </div>`;
+            });
+            html += `</div>`;
+            
+            resultsContent.innerHTML = html;
+        }
 
-                const activePlayers = game.players.filter(p => p.connected);
-                if (activePlayers.length === 0) {
-                    delete games[gameId];
-                    console.log(`🗑️ Sala ${gameId} eliminada`);
-                }
+        function renderVoting(words) {
+            votingArea.classList.remove('hidden');
+            votingList.innerHTML = '';
+            myVotes = {};
+            
+            words.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'vote-item';
+                div.id = `vote_${item.word}`;
+                div.innerHTML = `
+                    <div>
+                        <span class="word">${item.word}</span>
+                        <span class="category">(${item.category})</span>
+                    </div>
+                    <div class="vote-btns">
+                        <button class="yes" data-word="${item.word}" data-vote="yes">✅ Sí</button>
+                        <button class="no" data-word="${item.word}" data-vote="no">❌ No</button>
+                    </div>
+                `;
+                votingList.appendChild(div);
+                
+                // Eventos de votación
+                div.querySelectorAll('.vote-btns button').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const word = btn.dataset.word;
+                        const vote = btn.dataset.vote === 'yes';
+                        const wordDiv = document.getElementById(`vote_${word}`);
+                        wordDiv.querySelectorAll('.vote-btns button').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                        
+                        myVotes[word] = vote;
+                        socket.emit('voteWord', { 
+                            gameId, 
+                            playerId: socket.id, 
+                            word: word, 
+                            category: item.category, 
+                            vote: vote 
+                        });
+                    });
+                });
+            });
+            
+            votingStatus.textContent = '🗳️ Vota si cada palabra es válida para su categoría';
+        }
+
+        function updateVoteProgress(data) {
+            votingStatus.textContent = `📊 ${data.votesFor} a favor, ${data.votesAgainst} en contra · ${data.remaining} jugadores restantes`;
+        }
+
+        function showVoteResult(data) {
+            const wordDiv = document.getElementById(`vote_${data.word}`);
+            if (wordDiv) {
+                const status = document.createElement('span');
+                status.style.marginLeft = '10px';
+                status.style.fontWeight = 'bold';
+                status.style.color = data.approved ? '#4ade80' : '#f87171';
+                status.textContent = data.approved ? '✅ APROBADA' : '❌ RECHAZADA';
+                wordDiv.querySelector('.word').after(status);
+                wordDiv.querySelectorAll('.vote-btns button').forEach(b => b.disabled = true);
             }
         }
-    });
 
-    function getGameState(gameId) {
-        const game = games[gameId];
-        if (!game) return null;
-        return {
-            gameId: gameId,
-            players: game.players.map(p => ({
-                id: p.id,
-                name: p.name,
-                score: p.score,
-                isHost: p.isHost,
-                connected: p.connected
-            })),
-            maxPlayers: game.maxPlayers,
-            categories: game.categories,
-            currentLetter: game.currentLetter,
-            round: game.roundNumber,
-            maxRounds: game.maxRounds,
-            phase: game.phase,
-            gameStarted: game.gameStarted,
-            roundActive: game.roundActive,
-            timeLeft: game.timeLeft,
-            timeLimit: game.timeLimit,
-            stopPlayer: game.stopPlayer,
-            totalPlayers: game.players.length,
-            waitingForNextRound: game.waitingForNextRound,
-            pendingVotes: game.pendingVotes ? Object.keys(game.pendingVotes).length : 0,
-            voteResolved: game.voteResolved,
-            votesStarted: game.votesStarted
-        };
+        function addChatMessage(player, message, system) {
+            const div = document.createElement('div');
+            div.className = 'msg';
+            if (system) {
+                div.innerHTML = `<span class="system">${message}</span>`;
+            } else {
+                div.innerHTML = `<span class="player">${player}:</span> <span class="text">${message}</span>`;
+            }
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function updateGameUI(state) {
+            gameState = state;
+            if (!state) return;
+            
+            if (state.gameStarted) {
+                gameArea.classList.add('active');
+                waitingArea.classList.add('hidden');
+            } else {
+                gameArea.classList.remove('active');
+                waitingArea.classList.remove('hidden');
+                if (state.phase === 'finished') {
+                    hostControls.classList.add('hidden');
+                }
+            }
+            
+            currentLetter.textContent = state.currentLetter || '?';
+            
+            if (state.roundActive && state.timeLeft !== undefined) {
+                const t = state.timeLeft;
+                timerDisplay.textContent = `⏱️ ${t}s`;
+                timerDisplay.className = 'timer-display' + (t <= 10 ? ' danger' : t <= 20 ? ' warning' : '');
+            } else {
+                timerDisplay.textContent = '⏱️ 0s';
+                timerDisplay.className = 'timer-display';
+            }
+            
+            const canStop = state.roundActive && state.gameStarted && state.phase === 'playing' && !state.waitingForNextRound;
+            stopBtn.disabled = !canStop;
+            
+            if (state.phase === 'results') {
+                // Ya se muestra con roundResults
+            } else if (state.roundActive && state.phase === 'playing') {
+                renderAnswers(CATEGORIES, state.currentLetter, true);
+            } else {
+                renderAnswers(CATEGORIES, '', false);
+            }
+            
+            if (state.players) {
+                renderPlayers(state.players);
+                maxPlayersDisplay.textContent = state.maxPlayers || 8;
+            }
+            
+            if (isHost && !state.gameStarted && state.phase !== 'finished') {
+                document.getElementById('configArea').style.display = 'flex';
+                maxRoundsInput.value = state.maxRounds || 5;
+                timeLimitInput.value = state.timeLimit || 60;
+            } else {
+                document.getElementById('configArea').style.display = 'none';
+            }
+            
+            const startBtn = document.getElementById('startGameBtn');
+            if (isHost && !state.gameStarted && state.phase !== 'finished' && state.players && state.players.filter(p => p.connected).length >= 2) {
+                if (!document.getElementById('startGameBtn')) {
+                    const btn = document.createElement('button');
+                    btn.id = 'startGameBtn';
+                    btn.className = 'btn btn-success';
+                    btn.style.width = '100%';
+                    btn.style.marginTop = '10px';
+                    btn.innerHTML = '<i class="fas fa-play"></i> Iniciar Partida';
+                    btn.addEventListener('click', () => {
+                        socket.emit('startGame', { gameId });
+                    });
+                    document.getElementById('waitingArea').appendChild(btn);
+                }
+            } else {
+                const oldBtn = document.getElementById('startGameBtn');
+                if (oldBtn) oldBtn.remove();
+            }
+        }
+
+        function showWinnerConfetti(winnerName) {
+            addChatMessage('Sistema', `🏆 ${winnerName} ha ganado la partida! 🎉`, true);
+            launchConfetti();
+            setTimeout(() => {
+                alert(`🏆 ${winnerName} ha ganado la partida! 🎉🎊`);
+            }, 500);
+        }
+
+        // ---------- SOCKET ----------
+        function setupSocketListeners() {
+            if (!socket) return;
+
+            socket.on('connect', () => {
+                updateStatus('Conectado al servidor', 'connected');
+                connected = true;
+            });
+
+            socket.on('disconnect', () => {
+                updateStatus('Desconectado', 'error');
+                connected = false;
+            });
+
+            socket.on('gameCreated', () => {
+                updateStatus(`✅ Sala ${gameId} creada`, 'connected');
+            });
+
+            socket.on('gameState', (state) => {
+                updateGameUI(state);
+            });
+
+            socket.on('playersUpdate', (players) => {
+                renderPlayers(players);
+                playerCount.textContent = players.filter(p => p.connected).length;
+            });
+
+            socket.on('roundStarted', (data) => {
+                roundActive = true;
+                votingActive = false;
+                votingArea.classList.add('hidden');
+                resultsContainer.classList.add('hidden');
+                hostControls.classList.add('hidden');
+                updateStatus(`🔤 Ronda ${data.round} - Letra: ${data.letter}`, 'playing');
+                renderAnswers(CATEGORIES, data.letter, true);
+                timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
+                currentAnswers = {};
+                myVotes = {};
+            });
+
+            socket.on('timerUpdate', (data) => {
+                timerDisplay.textContent = `⏱️ ${data.timeLeft}s`;
+                timerDisplay.className = 'timer-display' + (data.timeLeft <= 10 ? ' danger' : data.timeLeft <= 20 ? ' warning' : '');
+            });
+
+            socket.on('playerStopped', (data) => {
+                addChatMessage('Sistema', `🛑 ${data.playerName} ha dicho STOP!`, true);
+            });
+
+            socket.on('startVoting', (data) => {
+                votingActive = true;
+                renderVoting(data.words);
+                addChatMessage('Sistema', data.message, true);
+                updateStatus('🗳️ Votación en curso', 'waiting');
+                stopBtn.disabled = true;
+            });
+
+            socket.on('voteProgress', (data) => {
+                updateVoteProgress(data);
+            });
+
+            socket.on('voteResult', (data) => {
+                showVoteResult(data);
+            });
+
+            // ---------- EN LA CONFIGURACIÓN DE SOCKET ----------
+socket.on('allVotesResolved', () => {
+    votingActive = false;
+    votingArea.classList.add('hidden');
+    updateStatus('✅ Votaciones completadas', 'connected');
+    addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
+    // El servidor ahora emite roundResults automáticamente después de las votaciones
+});
+
+// También asegúrate de que roundResults maneje correctamente la visualización:
+socket.on('roundResults', (data) => {
+    roundActive = false;
+    votingActive = false;
+    votingArea.classList.add('hidden');
+    renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
+    updateStatus('📊 Ronda finalizada', 'waiting');
+    stopBtn.disabled = true;
+    if (data.stopPlayerName) {
+        addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
     }
-
-    function getPlayersInfo(gameId) {
-        const game = games[gameId];
-        if (!game) return [];
-        return game.players.map(p => ({
-            id: p.id,
-            name: p.name,
-            isHost: p.isHost,
-            connected: p.connected
-        }));
+    if (data.roundNumber >= data.maxRounds) {
+        addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
+    }
+    // Mostrar botones de anfitrión si es host
+    if (isHost) {
+        hostControls.classList.remove('hidden');
     }
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🚀 Servidor STOP Online corriendo en http://localhost:${PORT}`);
-});
+            socket.on('gameReset', () => {
+                updateStatus('🔄 Partida reiniciada', 'waiting');
+                resultsContainer.classList.add('hidden');
+                hostControls.classList.add('hidden');
+                votingArea.classList.add('hidden');
+                renderAnswers([], '', false);
+                confettiContainer.innerHTML = '';
+            });
+
+            socket.on('chatMessage', (data) => {
+                if (data.system) {
+                    addChatMessage('Sistema', data.message, true);
+                } else {
+                    addChatMessage(data.player, data.message, false);
+                }
+            });
+
+            socket.on('error', (msg) => {
+                updateStatus('❌ ' + msg, 'error');
+                setTimeout(() => {
+                    if (connected) updateStatus('Conectado', 'connected');
+                }, 3000);
+            });
+        }
+
+        // ---------- ACCIONES ----------
+        function createGame() {
+            gameId = roomInput.value.trim().toUpperCase() || 'STOP';
+            playerName = prompt('Ingresa tu nombre:', 'Anfitrión') || 'Anfitrión';
+            if (!playerName) return;
+
+            const serverUrl = window.location.origin;
+            if (socket && connected) socket.disconnect();
+            socket = io(serverUrl);
+            setupSocketListeners();
+
+            socket.emit('createGame', { gameId, playerName, maxPlayers: 8 });
+            isHost = true;
+            updateStatus(`🏠 Creando sala ${gameId}...`, 'waiting');
+        }
+
+        function joinGame() {
+            gameId = roomInput.value.trim().toUpperCase() || 'STOP';
+            playerName = prompt('Ingresa tu nombre:', 'Jugador') || 'Jugador';
+            if (!playerName) return;
+
+            const serverUrl = window.location.origin;
+            if (socket && connected) socket.disconnect();
+            socket = io(serverUrl);
+            setupSocketListeners();
+
+            socket.emit('joinGame', { gameId, playerName });
+            isHost = false;
+            updateStatus(`🔗 Uniéndose a ${gameId}...`, 'waiting');
+        }
+
+        // ---------- EVENTOS UI ----------
+        createBtn.addEventListener('click', createGame);
+        joinBtn.addEventListener('click', joinGame);
+
+        roomInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (confirm('¿Crear sala o unirte? (OK=Crear, Cancel=Unirse)')) {
+                    createGame();
+                } else {
+                    joinGame();
+                }
+            }
+        });
+
+        chatSendBtn.addEventListener('click', () => {
+            const msg = chatInput.value.trim();
+            if (msg && socket && connected) {
+                socket.emit('chatMessage', { gameId, message: msg });
+                chatInput.value = '';
+            }
+        });
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') chatSendBtn.click();
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (socket && connected && roundActive && !votingActive) {
+                socket.emit('sayStop', { gameId });
+                stopBtn.disabled = true;
+            }
+        });
+
+        applyConfigBtn.addEventListener('click', () => {
+            if (socket && connected && isHost) {
+                const maxRounds = parseInt(maxRoundsInput.value) || 5;
+                const timeLimit = parseInt(timeLimitInput.value) || 60;
+                socket.emit('configGame', { gameId, maxRounds, timeLimit });
+            }
+        });
+
+        nextRoundBtn.addEventListener('click', () => {
+            if (socket && connected && isHost) {
+                socket.emit('nextRound', { gameId });
+            }
+        });
+
+        finishGameBtn.addEventListener('click', () => {
+            if (socket && connected && isHost) {
+                if (confirm('¿Estás seguro de que quieres finalizar la partida?')) {
+                    socket.emit('finishGame', { gameId });
+                }
+            }
+        });
+
+        // ---------- INICIALIZACIÓN ----------
+        updateStatus('🔌 Conéctate al servidor', 'waiting');
+        roomInput.value = 'STOP';
+        renderAnswers([], '', false);
+        renderPlayers([]);
+        hostControls.classList.add('hidden');
+        votingArea.classList.add('hidden');
+    })();
+</script>
+</body>
+</html>
