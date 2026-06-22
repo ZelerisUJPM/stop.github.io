@@ -96,6 +96,8 @@
         .btn-stop { background: #ef4444; color: #fff; font-size: 1.2rem; padding: 12px 35px; }
         .btn-stop:hover { background: #dc2626; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-host { background: #8b5cf6; color: #fff; }
+        .btn-host:hover { background: #7c3aed; }
         
         .game-layout {
             display: grid;
@@ -262,6 +264,16 @@
         .answer-input input:focus { border-color: #facc15; }
         .answer-input input:disabled { opacity: 0.5; }
         .answer-input input.saved { border-color: #4ade80; background: #4ade8011; }
+        .answer-input input.validating { border-color: #60a5fa; background: #60a5fa11; }
+        .answer-input input.valid { border-color: #4ade80; background: #4ade8011; }
+        .answer-input input.invalid { border-color: #f87171; background: #f8717111; }
+        .answer-input .validation-badge {
+            font-size: 0.65rem;
+            margin-top: 2px;
+        }
+        .answer-input .validation-badge.valid { color: #4ade80; }
+        .answer-input .validation-badge.invalid { color: #f87171; }
+        .answer-input .validation-badge.checking { color: #60a5fa; }
         
         .stop-area {
             text-align: center;
@@ -325,6 +337,24 @@
         }
         .config-area input:focus { border-color: #facc15; }
         
+        .host-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 10px;
+            background: #1e293b;
+            border-radius: 40px;
+        }
+        .host-controls .btn { flex: 1; min-width: 120px; }
+        .host-controls-label {
+            color: #94a3b8;
+            font-size: 0.7rem;
+            text-align: center;
+            width: 100%;
+        }
+        
         .hidden { display: none !important; }
         .flex-center { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
         
@@ -342,9 +372,39 @@
             border: 1px solid #facc1555;
         }
         
+        /* CONFETI */
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            overflow: hidden;
+        }
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            opacity: 0;
+            animation: confettiFall linear forwards;
+        }
+        @keyframes confettiFall {
+            0% {
+                opacity: 1;
+                transform: translateY(-20px) rotate(0deg);
+            }
+            100% {
+                opacity: 0;
+                transform: translateY(105vh) rotate(720deg);
+            }
+        }
+        
         @media (max-width: 600px) {
             .title { font-size: 1.5rem; }
             .letter-display { font-size: 3rem; }
+            .host-controls .btn { min-width: 80px; font-size: 0.8rem; padding: 8px 12px; }
         }
     </style>
 </head>
@@ -393,6 +453,13 @@
                 <div id="resultsContainer" class="hidden">
                     <h3 style="color:#facc15;margin-top:10px;">📊 Resultados</h3>
                     <div id="resultsContent"></div>
+                    
+                    <!-- Controles del anfitrión -->
+                    <div id="hostControls" class="host-controls hidden">
+                        <div class="host-controls-label">👑 Controles del Anfitrión</div>
+                        <button class="btn btn-success" id="nextRoundBtn"><i class="fas fa-forward"></i> Siguiente Ronda</button>
+                        <button class="btn btn-danger" id="finishGameBtn"><i class="fas fa-flag-checkered"></i> Finalizar Partida</button>
+                    </div>
                 </div>
             </div>
 
@@ -436,6 +503,9 @@
     </div>
 </div>
 
+<!-- CONTENEDOR DE CONFETI -->
+<div class="confetti-container" id="confettiContainer"></div>
+
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
     (function() {
@@ -457,6 +527,9 @@
         const stopBtn = document.getElementById('stopBtn');
         const resultsContainer = document.getElementById('resultsContainer');
         const resultsContent = document.getElementById('resultsContent');
+        const hostControls = document.getElementById('hostControls');
+        const nextRoundBtn = document.getElementById('nextRoundBtn');
+        const finishGameBtn = document.getElementById('finishGameBtn');
         
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
@@ -465,6 +538,8 @@
         const maxRoundsInput = document.getElementById('maxRoundsInput');
         const timeLimitInput = document.getElementById('timeLimitInput');
         const applyConfigBtn = document.getElementById('applyConfigBtn');
+        
+        const confettiContainer = document.getElementById('confettiContainer');
 
         const CATEGORIES = ['NOMBRE', 'APELLIDO', 'COSA', 'COLOR', 'FRUTA', 'PAÍS/CIUDAD', 'ANIMAL'];
 
@@ -476,6 +551,65 @@
         let gameState = null;
         let isHost = false;
         let roundActive = false;
+        let currentAnswers = {};
+        let validationResults = {};
+
+        // ---------- VALIDACIÓN CON INTERNET ----------
+        async function validateWord(word, category) {
+            if (!word || word.length < 2) return { valid: false, message: 'Palabra muy corta' };
+            
+            try {
+                // Usar la API de Diccionario para validar palabras en español
+                const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word.toLowerCase()}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.length > 0) {
+                        return { valid: true, message: '✅ Palabra válida' };
+                    }
+                }
+                
+                // Si no se encuentra en inglés, probar con español (usando otra API)
+                try {
+                    const spanishResponse = await fetch(`https://api.datamuse.com/words?sp=${word.toLowerCase()}&md=d`);
+                    const spanishData = await spanishResponse.json();
+                    if (spanishData && spanishData.length > 0) {
+                        return { valid: true, message: '✅ Palabra válida' };
+                    }
+                } catch (e) {}
+                
+                return { valid: false, message: '❌ Palabra no encontrada' };
+            } catch (error) {
+                console.error('Error validando palabra:', error);
+                return { valid: false, message: '⚠️ Error en validación' };
+            }
+        }
+
+        // ---------- CONFETI ----------
+        function launchConfetti() {
+            const colors = ['#facc15', '#4ade80', '#f87171', '#60a5fa', '#c084fc', '#fb923c', '#f472b6', '#22d3ee'];
+            const container = confettiContainer;
+            container.innerHTML = '';
+            
+            for (let i = 0; i < 150; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.top = '-10px';
+                confetti.style.width = (Math.random() * 8 + 4) + 'px';
+                confetti.style.height = (Math.random() * 8 + 4) + 'px';
+                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                confetti.style.animationDelay = (Math.random() * 2) + 's';
+                confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+                container.appendChild(confetti);
+            }
+            
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
 
         // ---------- FUNCIONES UI ----------
         function updateStatus(message, type) {
@@ -498,14 +632,14 @@
             playerCount.textContent = players.filter(p => p.connected).length;
         }
 
-        function renderAnswers(categories, letter, roundActive, answers) {
+        async function renderAnswers(categories, letter, roundActive, answers) {
             answersGrid.innerHTML = '';
             if (!roundActive || !categories) {
                 answersGrid.innerHTML = '<div style="color:#64748b;text-align:center;padding:20px;">Esperando ronda...</div>';
                 return;
             }
             
-            categories.forEach(cat => {
+            for (let cat of categories) {
                 const div = document.createElement('div');
                 div.className = 'answer-input';
                 const input = document.createElement('input');
@@ -521,24 +655,63 @@
                     input.classList.add('saved');
                 }
                 
-                input.addEventListener('blur', () => {
-                    if (input.value.trim().length > 0 && roundActive) {
-                        const val = input.value.trim().toUpperCase();
+                const badge = document.createElement('div');
+                badge.className = 'validation-badge';
+                badge.id = `badge_${cat}`;
+                
+                input.addEventListener('blur', async () => {
+                    const val = input.value.trim().toUpperCase();
+                    if (val.length > 0 && roundActive) {
+                        input.classList.add('validating');
+                        badge.textContent = '⏳ Validando...';
+                        badge.className = 'validation-badge checking';
+                        
+                        const result = await validateWord(val, cat);
+                        validationResults[cat] = result;
+                        
+                        if (result.valid) {
+                            input.classList.remove('validating');
+                            input.classList.add('valid');
+                            badge.textContent = '✅ Válida';
+                            badge.className = 'validation-badge valid';
+                        } else {
+                            input.classList.remove('validating');
+                            input.classList.add('invalid');
+                            badge.textContent = '❌ ' + result.message;
+                            badge.className = 'validation-badge invalid';
+                        }
+                        
                         socket.emit('sendAnswer', { gameId, category: cat, answer: val });
                         input.classList.add('saved');
-                        input.style.borderColor = '#4ade80';
                     }
                 });
                 
                 div.innerHTML = `<label for="answer_${cat}">${cat}</label>`;
                 div.appendChild(input);
+                div.appendChild(badge);
                 answersGrid.appendChild(div);
-            });
+            }
         }
 
-        function renderResults(results, letter, categories) {
+        function renderResults(results, letter, categories, roundNumber, maxRounds) {
             resultsContainer.classList.remove('hidden');
-            let html = `<div style="color:#94a3b8;font-size:0.8rem;margin-bottom:8px;">Letra: <strong style="color:#facc15;">${letter}</strong></div>`;
+            
+            // Mostrar controles del anfitrión
+            if (isHost) {
+                hostControls.classList.remove('hidden');
+                // Si es la última ronda, cambiar texto del botón
+                if (roundNumber >= maxRounds) {
+                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Ver Resultados Finales';
+                } else {
+                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Siguiente Ronda';
+                }
+            } else {
+                hostControls.classList.add('hidden');
+            }
+            
+            let html = `<div style="color:#94a3b8;font-size:0.8rem;margin-bottom:8px;">
+                Ronda ${roundNumber}/${maxRounds} · Letra: <strong style="color:#facc15;">${letter}</strong>
+            </div>`;
             html += `<table class="results-table">
                 <thead>
                     <tr>
@@ -550,8 +723,11 @@
                 </thead>
                 <tbody>`;
             
-            results.forEach(r => {
-                const isWinner = r.points > 0;
+            // Ordenar por puntos (mayor a menor)
+            const sortedResults = [...results].sort((a, b) => b.points - a.points);
+            
+            sortedResults.forEach((r, index) => {
+                const isWinner = index === 0 && r.points > 0;
                 html += `<tr class="${isWinner ? 'winner-row' : ''}">
                     <td><strong>${r.playerName}</strong></td>`;
                 categories.forEach(cat => {
@@ -573,6 +749,20 @@
             });
             
             html += `</tbody></table>`;
+            
+            // Mostrar clasificación actual
+            html += `<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:16px;">
+                <div style="color:#94a3b8;font-size:0.7rem;text-align:center;">🏆 Clasificación actual</div>`;
+            const sortedScores = [...results].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+            sortedScores.forEach((r, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                html += `<div style="display:flex;justify-content:space-between;padding:3px 8px;border-bottom:1px solid #1e293b;font-size:0.8rem;">
+                    <span>${medal} ${r.playerName}</span>
+                    <span style="color:#4ade80;font-weight:bold;">${r.totalScore || 0} pts</span>
+                </div>`;
+            });
+            html += `</div>`;
+            
             resultsContent.innerHTML = html;
         }
 
@@ -598,6 +788,10 @@
             } else {
                 gameArea.classList.remove('active');
                 waitingArea.classList.remove('hidden');
+                // Si la partida terminó, mostrar controls ocultos
+                if (state.phase === 'finished') {
+                    hostControls.classList.add('hidden');
+                }
             }
             
             currentLetter.textContent = state.currentLetter || '?';
@@ -611,10 +805,12 @@
                 timerDisplay.className = 'timer-display';
             }
             
-            const canStop = state.roundActive && state.gameStarted && state.phase === 'playing';
+            const canStop = state.roundActive && state.gameStarted && state.phase === 'playing' && !state.waitingForNextRound;
             stopBtn.disabled = !canStop;
             
-            if (state.roundActive && state.phase === 'playing') {
+            if (state.phase === 'results') {
+                // Ya se muestra con roundResults
+            } else if (state.roundActive && state.phase === 'playing') {
                 renderAnswers(CATEGORIES, state.currentLetter, true);
             } else {
                 renderAnswers(CATEGORIES, '', false);
@@ -625,7 +821,7 @@
                 maxPlayersDisplay.textContent = state.maxPlayers || 8;
             }
             
-            if (isHost && !state.gameStarted) {
+            if (isHost && !state.gameStarted && state.phase !== 'finished') {
                 document.getElementById('configArea').style.display = 'flex';
                 maxRoundsInput.value = state.maxRounds || 5;
                 timeLimitInput.value = state.timeLimit || 60;
@@ -635,7 +831,7 @@
             
             // Botón iniciar para el host
             const startBtn = document.getElementById('startGameBtn');
-            if (isHost && !state.gameStarted && state.players && state.players.filter(p => p.connected).length >= 2) {
+            if (isHost && !state.gameStarted && state.phase !== 'finished' && state.players && state.players.filter(p => p.connected).length >= 2) {
                 if (!document.getElementById('startGameBtn')) {
                     const btn = document.createElement('button');
                     btn.id = 'startGameBtn';
@@ -652,6 +848,17 @@
                 const oldBtn = document.getElementById('startGameBtn');
                 if (oldBtn) oldBtn.remove();
             }
+        }
+
+        // ---------- CONFETI PARA GANADOR ----------
+        function showWinnerConfetti(winnerName) {
+            addChatMessage('Sistema', `🏆 ${winnerName} ha ganado la partida! 🎉`, true);
+            launchConfetti();
+            
+            // Mostrar alerta con el ganador
+            setTimeout(() => {
+                alert(`🏆 ${winnerName} ha ganado la partida! 🎉🎊`);
+            }, 500);
         }
 
         // ---------- SOCKET ----------
@@ -684,9 +891,12 @@
             socket.on('roundStarted', (data) => {
                 roundActive = true;
                 resultsContainer.classList.add('hidden');
+                hostControls.classList.add('hidden');
                 updateStatus(`🔤 Ronda ${data.round} - Letra: ${data.letter}`, 'playing');
                 renderAnswers(CATEGORIES, data.letter, true);
                 timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
+                currentAnswers = {};
+                validationResults = {};
             });
 
             socket.on('timerUpdate', (data) => {
@@ -700,27 +910,41 @@
 
             socket.on('roundResults', (data) => {
                 roundActive = false;
-                renderResults(data.results, data.letter, data.categories);
+                renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
                 updateStatus('📊 Ronda finalizada', 'waiting');
                 stopBtn.disabled = true;
                 if (data.stopPlayerName) {
                     addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
                 }
+                
+                // Si es la última ronda, mostrar mensaje
+                if (data.roundNumber >= data.maxRounds) {
+                    addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
+                }
             });
 
             socket.on('gameFinished', (data) => {
                 updateStatus(`🏆 ${data.winner.name} ha ganado la partida!`, 'connected');
-                let msg = `🏆 ¡${data.winner.name} GANA con ${data.winner.score} puntos!\n`;
+                showWinnerConfetti(data.winner.name);
+                
+                let msg = `🏆 ¡${data.winner.name} GANA con ${data.winner.score} puntos!\n\n`;
                 data.players.forEach(p => {
                     msg += `${p.name}: ${p.score} pts\n`;
                 });
-                alert(msg);
+                setTimeout(() => {
+                    alert(msg);
+                }, 800);
+                
+                // Ocultar controles del host
+                hostControls.classList.add('hidden');
             });
 
             socket.on('gameReset', () => {
                 updateStatus('🔄 Partida reiniciada', 'waiting');
                 resultsContainer.classList.add('hidden');
+                hostControls.classList.add('hidden');
                 renderAnswers([], '', false);
+                confettiContainer.innerHTML = '';
             });
 
             socket.on('chatMessage', (data) => {
@@ -811,11 +1035,27 @@
             }
         });
 
+        // Botones del anfitrión
+        nextRoundBtn.addEventListener('click', () => {
+            if (socket && connected && isHost) {
+                socket.emit('nextRound', { gameId });
+            }
+        });
+
+        finishGameBtn.addEventListener('click', () => {
+            if (socket && connected && isHost) {
+                if (confirm('¿Estás seguro de que quieres finalizar la partida?')) {
+                    socket.emit('finishGame', { gameId });
+                }
+            }
+        });
+
         // ---------- INICIALIZACIÓN ----------
         updateStatus('🔌 Conéctate al servidor', 'waiting');
         roomInput.value = 'STOP';
         renderAnswers([], '', false);
         renderPlayers([]);
+        hostControls.classList.add('hidden');
     })();
 </script>
 </body>
