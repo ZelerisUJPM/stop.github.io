@@ -31,126 +31,34 @@ const FIXED_CATEGORIES = [
 ];
 
 // =====================================================
-// VALIDACIÓN ONLINE CON DICCIONARIO
+// VALIDACIÓN CON DATAMUSE + VOTACIÓN
 // =====================================================
 
-// Función para validar una palabra con la API de Diccionario
-async function validateWordWithDictionary(word) {
+async function validateWordWithDatamuse(word) {
     if (!word || word.length < 2) {
         return { valid: false, reason: 'Palabra demasiado corta' };
     }
 
     try {
-        // Intentar con la API de Diccionario (inglés)
-        const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`);
+        const response = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=3`);
+        const data = await response.json();
         
-        if (response.ok) {
-            const data = await response.json();
-            if (data && data.length > 0 && data[0].word) {
-                return { valid: true, reason: 'Palabra encontrada en diccionario' };
+        if (data && data.length > 0) {
+            const exactMatch = data.some(item => 
+                item.word && item.word.toUpperCase() === word.toUpperCase()
+            );
+            if (exactMatch) {
+                return { valid: true, reason: 'Palabra encontrada en Datamuse' };
             }
         }
-
-        // Si no se encuentra en inglés, probar con Datamuse (español/inglés)
-        try {
-            const spanishResponse = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=5`);
-            const spanishData = await spanishResponse.json();
-            if (spanishData && spanishData.length > 0) {
-                // Verificar coincidencia exacta
-                const exactMatch = spanishData.some(item => 
-                    item.word && item.word.toUpperCase() === word.toUpperCase()
-                );
-                if (exactMatch) {
-                    return { valid: true, reason: 'Palabra encontrada en Datamuse' };
-                }
-            }
-        } catch (e) {
-            console.log('Error en Datamuse:', e.message);
-        }
-
-        // Verificar si es un nombre propio (primera letra mayúscula)
-        if (word[0] === word[0].toUpperCase() && word.length >= 3) {
-            return { valid: true, reason: 'Nombre propio aceptado' };
-        }
-
-        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
+        
+        // No encontrada en Datamuse → requiere votación
+        return { valid: false, reason: 'Palabra no encontrada en Datamuse' };
     } catch (error) {
-        console.error('Error validando palabra:', error);
-        // En caso de error de red, permitir la palabra (para no bloquear el juego)
-        return { valid: true, reason: 'Validación falló, se acepta palabra' };
+        console.error('Error en Datamuse:', error);
+        // Si falla la API, también requiere votación
+        return { valid: false, reason: 'Error de conexión con Datamuse' };
     }
-}
-
-// Validación específica por categoría
-async function validateAnswerByCategory(answer, category, letter) {
-    // 1. Verificar que no esté vacío
-    if (!answer || answer.length === 0) {
-        return { valid: false, reason: 'Respuesta vacía' };
-    }
-
-    // 2. Verificar que comience con la letra correcta
-    if (answer[0] !== letter) {
-        return { valid: false, reason: `No comienza con la letra ${letter}` };
-    }
-
-    // 3. Verificar longitud mínima (evitar respuestas de 1 letra como "V")
-    if (answer.length < 2) {
-        return { valid: false, reason: 'La palabra es demasiado corta' };
-    }
-
-    // 4. Verificar si es un nombre propio (categoría NOMBRE)
-    if (category === 'NOMBRE') {
-        // Los nombres propios se aceptan si tienen 2+ letras y primera mayúscula
-        if (answer[0] === answer[0].toUpperCase() && answer.length >= 2) {
-            return { valid: true, reason: 'Nombre propio aceptado' };
-        }
-        // También verificar en diccionario si no tiene mayúscula
-        const dictResult = await validateWordWithDictionary(answer);
-        return dictResult;
-    }
-
-    // 5. Para APELLIDO: aceptar si tiene 3+ letras y primera mayúscula
-    if (category === 'APELLIDO') {
-        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
-            return { valid: true, reason: 'Apellido aceptado' };
-        }
-        const dictResult = await validateWordWithDictionary(answer);
-        return dictResult;
-    }
-
-    // 6. Para PAÍS/CIUDAD: aceptar si tiene 3+ letras y primera mayúscula
-    if (category === 'PAÍS/CIUDAD') {
-        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
-            return { valid: true, reason: 'País/ciudad aceptado' };
-        }
-        // También buscar en diccionario
-        const dictResult = await validateWordWithDictionary(answer);
-        return dictResult;
-    }
-
-    // 7. Para COLOR, FRUTA, ANIMAL, COSA: validar con diccionario
-    if (category === 'COLOR' || category === 'FRUTA' || category === 'ANIMAL' || category === 'COSA') {
-        // Verificar en diccionario
-        const dictResult = await validateWordWithDictionary(answer);
-        if (dictResult.valid) {
-            return { valid: true, reason: 'Palabra válida' };
-        }
-        
-        // Si es un nombre propio, aceptarlo
-        if (answer[0] === answer[0].toUpperCase() && answer.length >= 3) {
-            return { valid: true, reason: 'Nombre propio aceptado' };
-        }
-        
-        // Si tiene 4+ letras, aceptarlo como palabra válida (para evitar falsos negativos)
-        if (answer.length >= 4) {
-            return { valid: true, reason: 'Palabra aceptada (4+ letras)' };
-        }
-        
-        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
-    }
-
-    // Default: validar con diccionario
-    return await validateWordWithDictionary(answer);
 }
 
 // =====================================================
@@ -188,7 +96,10 @@ io.on('connection', (socket) => {
             host: socket.id,
             gameStarted: false,
             roundNumber: 0,
-            waitingForNextRound: false
+            waitingForNextRound: false,
+            // Votaciones
+            pendingVotes: {},
+            voteResults: {}
         };
 
         const game = games[gameId];
@@ -271,6 +182,8 @@ io.on('connection', (socket) => {
         game.roundNumber = 0;
         game.players.forEach(p => p.score = 0);
         game.waitingForNextRound = false;
+        game.pendingVotes = {};
+        game.voteResults = {};
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -295,6 +208,8 @@ io.on('connection', (socket) => {
         game.stopPlayer = null;
         game.timeLeft = game.timeLimit || 60;
         game.waitingForNextRound = false;
+        game.pendingVotes = {};
+        game.voteResults = {};
 
         const availableLetters = LETTERS.split('');
         game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
@@ -395,6 +310,93 @@ io.on('connection', (socket) => {
         }, 1500);
     });
 
+    // =====================================================
+    // VOTACIÓN
+    // =====================================================
+
+    socket.on('voteWord', (data) => {
+        const { gameId, playerId, word, category, vote } = data;
+        const game = games[gameId];
+        if (!game) return;
+
+        if (!game.pendingVotes[word]) {
+            game.pendingVotes[word] = {
+                category: category,
+                votes: {},
+                total: 0,
+                approved: false,
+                resolved: false
+            };
+        }
+
+        const voteData = game.pendingVotes[word];
+        if (voteData.resolved) return;
+
+        // Registrar voto
+        if (!voteData.votes[playerId]) {
+            voteData.votes[playerId] = vote;
+            voteData.total++;
+        } else {
+            // Actualizar voto si cambió
+            voteData.votes[playerId] = vote;
+        }
+
+        // Calcular votos
+        const votesFor = Object.values(voteData.votes).filter(v => v === true).length;
+        const votesAgainst = Object.values(voteData.votes).filter(v => v === false).length;
+        const totalVotes = Object.keys(voteData.votes).length;
+        const activePlayers = game.players.filter(p => p.connected).length;
+
+        // Si todos los jugadores votaron o hay mayoría (2/3)
+        if (totalVotes >= activePlayers || votesFor >= Math.ceil(activePlayers * 2 / 3)) {
+            voteData.resolved = true;
+            voteData.approved = votesFor > votesAgainst;
+            
+            // Notificar resultado
+            io.to(gameId).emit('voteResult', {
+                word: word,
+                category: category,
+                approved: voteData.approved,
+                votesFor: votesFor,
+                votesAgainst: votesAgainst
+            });
+            
+            io.to(gameId).emit('chatMessage', {
+                player: 'Sistema',
+                message: `📊 Votación para "${word}": ${votesFor} a favor, ${votesAgainst} en contra - ${voteData.approved ? '✅ APROBADA' : '❌ RECHAZADA'}`,
+                system: true
+            });
+
+            // Verificar si todas las palabras pendientes están resueltas
+            checkAllVotesResolved(gameId);
+        } else {
+            // Informar progreso
+            io.to(gameId).emit('voteProgress', {
+                word: word,
+                votesFor: votesFor,
+                votesAgainst: votesAgainst,
+                total: totalVotes,
+                remaining: activePlayers - totalVotes
+            });
+        }
+    });
+
+    function checkAllVotesResolved(gameId) {
+        const game = games[gameId];
+        if (!game) return;
+
+        const allResolved = Object.values(game.pendingVotes).every(v => v.resolved === true);
+        if (allResolved && Object.keys(game.pendingVotes).length > 0) {
+            // Todas las votaciones completadas, continuar con la ronda
+            io.to(gameId).emit('allVotesResolved', { success: true });
+            finishRound(gameId);
+        }
+    }
+
+    // =====================================================
+    // FUNCIONES AUXILIARES
+    // =====================================================
+
     socket.on('nextRound', (data) => {
         const { gameId } = data;
         const game = games[gameId];
@@ -494,8 +496,42 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         clearInterval(game.timer);
 
-        // Calcular resultados con validación online
-        const results = await calculateRoundResults(game);
+        // 1. Validar con Datamuse y preparar votaciones
+        const validationResults = await validateAllAnswers(game);
+        
+        // 2. Si hay palabras que necesitan votación, iniciar votación
+        const wordsToVote = Object.values(validationResults).filter(r => r.needsVote);
+        
+        if (wordsToVote.length > 0) {
+            // Iniciar votación
+            game.pendingVotes = {};
+            wordsToVote.forEach(item => {
+                game.pendingVotes[item.word] = {
+                    category: item.category,
+                    votes: {},
+                    total: 0,
+                    approved: false,
+                    resolved: false
+                };
+            });
+            
+            io.to(gameId).emit('startVoting', {
+                words: wordsToVote,
+                message: '📋 Algunas palabras no se encontraron en Datamuse. ¡Voten si son válidas!'
+            });
+            
+            io.to(gameId).emit('chatMessage', {
+                player: 'Sistema',
+                message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas en Datamuse`,
+                system: true
+            });
+            
+            // No continuar hasta que terminen las votaciones
+            return;
+        }
+
+        // 3. Si no hay votaciones, calcular resultados directamente
+        const results = calculateRoundResults(game, validationResults);
         
         for (let result of results) {
             const player = game.players.find(p => p.id === result.playerId);
@@ -524,11 +560,136 @@ io.on('connection', (socket) => {
         io.to(gameId).emit('gameState', getGameState(gameId));
     }
 
-    async function calculateRoundResults(game) {
-        const results = [];
-        const categories = game.categories;
+    // Cuando todas las votaciones se resuelven
+    socket.on('allVotesResolved', (data) => {
+        const { gameId } = data;
+        const game = games[gameId];
+        if (!game) return;
+
+        // Aplicar resultados de votación a las respuestas
+        const validationResults = applyVoteResults(game);
+        
+        // Calcular resultados finales
+        const results = calculateRoundResults(game, validationResults);
+        
+        for (let result of results) {
+            const player = game.players.find(p => p.id === result.playerId);
+            if (player) {
+                player.score += result.points;
+                result.totalScore = player.score;
+            }
+        }
+
+        io.to(gameId).emit('roundResults', {
+            results: results,
+            letter: game.currentLetter,
+            categories: game.categories,
+            stopPlayer: game.stopPlayer,
+            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
+            roundNumber: game.roundNumber,
+            maxRounds: game.maxRounds,
+            votesApplied: true
+        });
+
+        io.to(gameId).emit('chatMessage', {
+            player: 'Sistema',
+            message: `📊 ¡Ronda ${game.roundNumber} finalizada con votaciones!`,
+            system: true
+        });
+
+        io.to(gameId).emit('gameState', getGameState(gameId));
+    });
+
+    async function validateAllAnswers(game) {
+        const results = {};
         const players = game.players.filter(p => p.connected);
         
+        for (let player of players) {
+            const playerAnswers = game.answers[player.id];
+            if (!playerAnswers) continue;
+            
+            for (let cat of game.categories) {
+                const answer = playerAnswers.answers[cat] || '';
+                if (answer.length === 0) {
+                    results[`${player.id}_${cat}`] = {
+                        playerId: player.id,
+                        category: cat,
+                        word: answer,
+                        valid: false,
+                        needsVote: false
+                    };
+                    continue;
+                }
+                
+                const validation = await validateWordWithDatamuse(answer);
+                results[`${player.id}_${cat}`] = {
+                    playerId: player.id,
+                    category: cat,
+                    word: answer,
+                    valid: validation.valid,
+                    needsVote: !validation.valid,
+                    reason: validation.reason || ''
+                };
+            }
+        }
+        
+        return results;
+    }
+
+    function applyVoteResults(game) {
+        const results = {};
+        const players = game.players.filter(p => p.connected);
+        
+        for (let player of players) {
+            const playerAnswers = game.answers[player.id];
+            if (!playerAnswers) continue;
+            
+            for (let cat of game.categories) {
+                const answer = playerAnswers.answers[cat] || '';
+                const key = `${player.id}_${cat}`;
+                
+                // Verificar si esta palabra estaba en votación
+                const voteData = game.pendingVotes[answer];
+                if (voteData && voteData.resolved) {
+                    results[key] = {
+                        playerId: player.id,
+                        category: cat,
+                        word: answer,
+                        valid: voteData.approved,
+                        needsVote: false,
+                        voted: true,
+                        approved: voteData.approved
+                    };
+                } else if (answer.length > 0) {
+                    // Si no estaba en votación, asumir válida (ya pasó Datamuse)
+                    results[key] = {
+                        playerId: player.id,
+                        category: cat,
+                        word: answer,
+                        valid: true,
+                        needsVote: false
+                    };
+                } else {
+                    results[key] = {
+                        playerId: player.id,
+                        category: cat,
+                        word: answer,
+                        valid: false,
+                        needsVote: false
+                    };
+                }
+            }
+        }
+        
+        return results;
+    }
+
+    function calculateRoundResults(game, validationResults) {
+        const results = [];
+        const players = game.players.filter(p => p.connected);
+        const categories = game.categories;
+        
+        // Agrupar respuestas por categoría para detectar duplicados
         const categoryAnswers = {};
         categories.forEach(cat => {
             categoryAnswers[cat] = {};
@@ -544,7 +705,7 @@ io.on('connection', (socket) => {
             });
         });
 
-        for (let p of players) {
+        players.forEach(p => {
             const playerAnswers = game.answers[p.id];
             if (!playerAnswers) {
                 results.push({
@@ -555,23 +716,23 @@ io.on('connection', (socket) => {
                     stopped: false,
                     totalScore: p.score
                 });
-                continue;
+                return;
             }
 
             let points = 0;
             let answerDetails = {};
             const stopped = playerAnswers.stopped || false;
 
-            for (let cat of categories) {
+            categories.forEach(cat => {
                 const answer = playerAnswers.answers[cat] || '';
-                
-                // --- VALIDACIÓN ONLINE POR CATEGORÍA ---
-                const validation = await validateAnswerByCategory(answer, cat, game.currentLetter);
-                const isValid = validation.valid;
+                const key = `${p.id}_${cat}`;
+                const validation = validationResults ? validationResults[key] : null;
+                const isValid = validation ? validation.valid : (answer.length > 0);
                 
                 const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
+                const startsWithLetter = answer.length > 0 && answer[0] === game.currentLetter;
                 
-                if (answer && isValid) {
+                if (answer && isValid && startsWithLetter) {
                     if (isUnique) {
                         points += 1;
                         answerDetails[cat] = { 
@@ -579,7 +740,7 @@ io.on('connection', (socket) => {
                             points: 1, 
                             unique: true,
                             valid: true,
-                            validated: validation.reason
+                            voted: validation?.voted || false
                         };
                     } else {
                         answerDetails[cat] = { 
@@ -587,19 +748,17 @@ io.on('connection', (socket) => {
                             points: 0, 
                             unique: false, 
                             duplicated: true,
-                            valid: true,
-                            validated: validation.reason
+                            valid: true
                         };
                     }
                 } else if (answer) {
-                    // Respuesta inválida o incorrecta
                     answerDetails[cat] = { 
                         answer, 
                         points: 0, 
                         unique: false, 
                         invalid: true,
                         valid: false,
-                        reason: validation.reason || 'No válida'
+                        reason: validation?.reason || 'No válida'
                     };
                 } else {
                     answerDetails[cat] = { 
@@ -609,14 +768,15 @@ io.on('connection', (socket) => {
                         valid: false
                     };
                 }
-            }
+            });
 
             let hasValidAnswers = false;
             for (let cat of categories) {
                 const ans = playerAnswers.answers[cat];
                 if (ans) {
-                    const validation = await validateAnswerByCategory(ans, cat, game.currentLetter);
-                    if (validation.valid) {
+                    const key = `${p.id}_${cat}`;
+                    const validation = validationResults ? validationResults[key] : null;
+                    if (validation ? validation.valid : (ans.length > 0 && ans[0] === game.currentLetter)) {
                         hasValidAnswers = true;
                         break;
                     }
@@ -635,7 +795,7 @@ io.on('connection', (socket) => {
                 stopped: stopped,
                 totalScore: p.score + points
             });
-        }
+        });
 
         return results;
     }
@@ -659,6 +819,8 @@ io.on('connection', (socket) => {
         game.stopPlayer = null;
         game.roundActive = false;
         game.waitingForNextRound = false;
+        game.pendingVotes = {};
+        game.voteResults = {};
         clearInterval(game.timer);
 
         io.to(gameId).emit('gameState', getGameState(gameId));
@@ -783,7 +945,8 @@ io.on('connection', (socket) => {
             timeLimit: game.timeLimit,
             stopPlayer: game.stopPlayer,
             totalPlayers: game.players.length,
-            waitingForNextRound: game.waitingForNextRound
+            waitingForNextRound: game.waitingForNextRound,
+            pendingVotes: game.pendingVotes ? Object.keys(game.pendingVotes).length : 0
         };
     }
 
