@@ -274,6 +274,9 @@ io.on('connection', (socket) => {
         }
     });
 
+    // =====================================================
+    // NUEVA REGLA: STOP solo si todas las casillas están llenas
+    // =====================================================
     socket.on('sayStop', (data) => {
         const { gameId } = data;
         const game = games[gameId];
@@ -286,12 +289,39 @@ io.on('connection', (socket) => {
         const playerAnswers = game.answers[player.id];
         if (playerAnswers.stopped) return;
 
-        const hasAnswers = Object.keys(playerAnswers.answers).length > 0;
-        if (!hasAnswers) {
-            socket.emit('error', 'Debes tener al menos una respuesta para decir STOP');
+        // VERIFICAR QUE TODAS LAS CASILLAS ESTÉN LLENAS
+        const categories = game.categories;
+        let allFilled = true;
+        let emptyCategories = [];
+
+        for (let cat of categories) {
+            if (!playerAnswers.answers[cat] || playerAnswers.answers[cat].trim().length === 0) {
+                allFilled = false;
+                emptyCategories.push(cat);
+            }
+        }
+
+        if (!allFilled) {
+            socket.emit('error', `❌ Debes llenar todas las casillas antes de decir STOP. Faltan: ${emptyCategories.join(', ')}`);
             return;
         }
 
+        // Verificar que tenga al menos una respuesta válida (que empiece con la letra)
+        let hasValidAnswer = false;
+        for (let cat of categories) {
+            const ans = playerAnswers.answers[cat] || '';
+            if (ans.length > 0 && ans[0] === game.currentLetter) {
+                hasValidAnswer = true;
+                break;
+            }
+        }
+
+        if (!hasValidAnswer) {
+            socket.emit('error', '❌ Debes tener al menos una respuesta válida (que comience con la letra) para decir STOP');
+            return;
+        }
+
+        // Registrar STOP
         playerAnswers.stopped = true;
         playerAnswers.stoppedAt = Date.now();
         game.stopPlayer = player.id;
@@ -403,27 +433,16 @@ io.on('connection', (socket) => {
             
             console.log(`✅ Votaciones completadas en sala ${gameId}, calculando resultados...`);
             
-            // Forzar la finalización de la ronda después de las votaciones
             setTimeout(() => {
                 forceFinishRound(gameId);
             }, 1000);
         }
     }
 
-    // =====================================================
-    // FUNCIÓN PARA FORZAR LA FINALIZACIÓN DE LA RONDA
-    // =====================================================
     function forceFinishRound(gameId) {
         const game = games[gameId];
-        if (!game) {
-            console.log(`❌ Juego ${gameId} no encontrado`);
-            return;
-        }
-
-        if (game.resultsCalculated) {
-            console.log(`⚠️ Resultados ya calculados para sala ${gameId}`);
-            return;
-        }
+        if (!game) return;
+        if (game.resultsCalculated) return;
 
         console.log(`📊 Forzando finalización de ronda ${game.roundNumber} en sala ${gameId}`);
         
@@ -433,10 +452,7 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         clearInterval(game.timer);
 
-        // Aplicar resultados de votación
         const validationResults = applyVoteResults(game);
-        
-        // Calcular resultados finales
         const results = calculateRoundResults(game, validationResults);
         
         for (let result of results) {
@@ -447,7 +463,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Emitir resultados
         io.to(gameId).emit('roundResults', {
             results: results,
             letter: game.currentLetter,
@@ -612,7 +627,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Sin votaciones, calcular resultados directamente
         game.resultsCalculated = true;
         game.roundFinished = true;
         const results = calculateRoundResults(game, validationResults);
@@ -727,11 +741,15 @@ io.on('connection', (socket) => {
         return results;
     }
 
+    // =====================================================
+    // NUEVA FUNCIÓN DE PUNTUACIÓN: 100 pts únicas, 50 pts repetidas
+    // =====================================================
     function calculateRoundResults(game, validationResults) {
         const results = [];
         const players = game.players.filter(p => p.connected);
         const categories = game.categories;
         
+        // 1. Agrupar respuestas por categoría para detectar duplicados
         const categoryAnswers = {};
         categories.forEach(cat => {
             categoryAnswers[cat] = {};
@@ -739,14 +757,18 @@ io.on('connection', (socket) => {
                 const playerAnswers = game.answers[p.id];
                 if (playerAnswers && playerAnswers.answers[cat]) {
                     const answer = playerAnswers.answers[cat];
-                    if (!categoryAnswers[cat][answer]) {
-                        categoryAnswers[cat][answer] = [];
+                    // Solo considerar respuestas válidas (que empiezan con la letra)
+                    if (answer && answer.length > 0 && answer[0] === game.currentLetter) {
+                        if (!categoryAnswers[cat][answer]) {
+                            categoryAnswers[cat][answer] = [];
+                        }
+                        categoryAnswers[cat][answer].push(p.id);
                     }
-                    categoryAnswers[cat][answer].push(p.id);
                 }
             });
         });
 
+        // 2. Calcular puntos por jugador
         players.forEach(p => {
             const playerAnswers = game.answers[p.id];
             if (!playerAnswers) {
@@ -769,30 +791,29 @@ io.on('connection', (socket) => {
                 const answer = playerAnswers.answers[cat] || '';
                 const key = `${p.id}_${cat}`;
                 const validation = validationResults ? validationResults[key] : null;
-                const isValid = validation ? validation.valid : (answer.length > 0);
+                const isValid = validation ? validation.valid : (answer.length > 0 && answer[0] === game.currentLetter);
                 
                 const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
                 const startsWithLetter = answer.length > 0 && answer[0] === game.currentLetter;
                 
                 if (answer && isValid && startsWithLetter) {
+                    // NUEVA REGLA DE PUNTUACIÓN
+                    let pts = 0;
                     if (isUnique) {
-                        points += 1;
-                        answerDetails[cat] = { 
-                            answer, 
-                            points: 1, 
-                            unique: true,
-                            valid: true,
-                            voted: validation?.voted || false
-                        };
+                        pts = 100; // Única → 100 puntos
                     } else {
-                        answerDetails[cat] = { 
-                            answer, 
-                            points: 0, 
-                            unique: false, 
-                            duplicated: true,
-                            valid: true
-                        };
+                        pts = 50;  // Repetida → 50 puntos
                     }
+                    points += pts;
+                    
+                    answerDetails[cat] = { 
+                        answer, 
+                        points: pts, 
+                        unique: isUnique,
+                        valid: true,
+                        voted: validation?.voted || false,
+                        duplicated: !isUnique
+                    };
                 } else if (answer) {
                     answerDetails[cat] = { 
                         answer, 
@@ -812,6 +833,7 @@ io.on('connection', (socket) => {
                 }
             });
 
+            // BONIFICACIÓN POR STOP: +50 puntos si tiene respuestas válidas
             let hasValidAnswers = false;
             for (let cat of categories) {
                 const ans = playerAnswers.answers[cat];
@@ -826,7 +848,7 @@ io.on('connection', (socket) => {
             }
 
             if (stopped && hasValidAnswers) {
-                points += 2;
+                points += 50; // Bonificación por STOP
             }
 
             results.push({
