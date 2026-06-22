@@ -37,7 +37,6 @@
             font-size: 0.9rem;
             margin-bottom: 15px;
         }
-        
         .status-bar {
             text-align: center;
             padding: 10px 16px;
@@ -54,7 +53,6 @@
             flex-wrap: wrap;
             font-size: 0.95rem;
         }
-        
         .room-controls {
             display: flex;
             gap: 10px;
@@ -74,7 +72,6 @@
             text-align: center;
         }
         .room-controls input:focus { border-color: #facc15; }
-        
         .btn {
             padding: 10px 25px;
             border-radius: 40px;
@@ -96,13 +93,12 @@
         .btn-stop { background: #ef4444; color: #fff; font-size: 1.2rem; padding: 12px 35px; }
         .btn-stop:hover { background: #dc2626; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-host { background: #8b5cf6; color: #fff; }
-        .btn-host:hover { background: #7c3aed; }
-        .btn-vote-yes { background: #4ade80; color: #0f172a; }
+        .btn-vote-yes { background: #4ade80; color: #0f172a; padding: 4px 14px; border-radius: 30px; font-size: 0.8rem; border: none; cursor: pointer; }
         .btn-vote-yes:hover { background: #22c55e; }
-        .btn-vote-no { background: #f87171; color: #0f172a; }
+        .btn-vote-no { background: #f87171; color: #0f172a; padding: 4px 14px; border-radius: 30px; font-size: 0.8rem; border: none; cursor: pointer; }
         .btn-vote-no:hover { background: #ef4444; }
-        
+        .btn-vote-yes.selected { background: #22c55e; box-shadow: 0 0 10px #4ade80; }
+        .btn-vote-no.selected { background: #dc2626; box-shadow: 0 0 10px #f87171; }
         .game-layout {
             display: grid;
             grid-template-columns: 1fr 300px;
@@ -111,20 +107,17 @@
         @media (max-width: 800px) {
             .game-layout { grid-template-columns: 1fr; }
         }
-        
         .main-panel {
             background: rgba(0,0,0,0.4);
             border-radius: 24px;
             padding: 20px;
             border: 1px solid #334155;
         }
-        
         .side-panel {
             display: flex;
             flex-direction: column;
             gap: 15px;
         }
-        
         .players-list {
             background: rgba(0,0,0,0.4);
             border-radius: 24px;
@@ -148,7 +141,6 @@
         .player-item .name { color: #e2e8f0; }
         .player-item .name.host { color: #facc15; }
         .player-item .score { color: #4ade80; font-weight: bold; }
-        
         .categories-area {
             background: rgba(0,0,0,0.4);
             border-radius: 24px;
@@ -170,7 +162,6 @@
             color: #facc15;
             border: 1px solid #facc1533;
         }
-        
         .chat-box {
             background: rgba(0,0,0,0.4);
             border-radius: 24px;
@@ -215,10 +206,8 @@
         }
         .chat-input input:focus { border-color: #facc15; }
         .chat-input button { padding: 8px 18px; font-size: 0.85rem; }
-        
         .game-area { display: none; }
         .game-area.active { display: block; }
-        
         .letter-display {
             text-align: center;
             font-size: 4rem;
@@ -235,7 +224,6 @@
             color: #94a3b8;
             display: block;
         }
-        
         .answers-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -268,12 +256,10 @@
         .answer-input input:focus { border-color: #facc15; }
         .answer-input input:disabled { opacity: 0.5; }
         .answer-input input.saved { border-color: #4ade80; background: #4ade8011; }
-        
         .stop-area {
             text-align: center;
             margin: 15px 0;
         }
-        
         .timer-display {
             text-align: center;
             font-size: 2rem;
@@ -283,7 +269,6 @@
         }
         .timer-display.warning { color: #facc15; }
         .timer-display.danger { color: #f87171; }
-        
         .results-table {
             width: 100%;
             border-collapse: collapse;
@@ -304,10 +289,7 @@
             text-align: center;
         }
         .results-table .winner-row { background: #facc1522; }
-        .results-table .highlight { color: #facc15; font-weight: bold; }
         .results-table .points { color: #4ade80; font-weight: bold; }
-        .results-table .stop-badge { color: #f87171; font-weight: bold; }
-        
         .config-area {
             margin: 10px 0;
             display: flex;
@@ -330,7 +312,6 @@
             outline: none;
         }
         .config-area input:focus { border-color: #facc15; }
-        
         .host-controls {
             display: flex;
             gap: 10px;
@@ -348,7 +329,6 @@
             text-align: center;
             width: 100%;
         }
-        
         .voting-area {
             background: #0f172a;
             border-radius: 20px;
@@ -368,6 +348,8 @@
             background: #1e293b;
             border-radius: 12px;
             margin-bottom: 8px;
+            flex-wrap: wrap;
+            gap: 8px;
         }
         .vote-item .word {
             color: #e2e8f0;
@@ -381,27 +363,13 @@
             display: flex;
             gap: 8px;
         }
-        .vote-item .vote-btns button {
-            padding: 4px 14px;
-            border-radius: 30px;
-            font-size: 0.8rem;
-            font-weight: bold;
-            border: none;
-            cursor: pointer;
-        }
-        .vote-item .vote-btns .yes { background: #4ade80; color: #0f172a; }
-        .vote-item .vote-btns .no { background: #f87171; color: #0f172a; }
-        .vote-item .vote-btns .yes.selected { background: #22c55e; box-shadow: 0 0 10px #4ade80; }
-        .vote-item .vote-btns .no.selected { background: #dc2626; box-shadow: 0 0 10px #f87171; }
-        .vote-item .vote-btns button:disabled { opacity: 0.5; cursor: not-allowed; }
         .vote-progress {
             color: #94a3b8;
             font-size: 0.7rem;
+            margin-top: 10px;
         }
-        
         .hidden { display: none !important; }
         .flex-center { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
-        
         .categories-fixed {
             display: flex;
             flex-wrap: wrap;
@@ -415,7 +383,6 @@
             font-size: 0.75rem;
             border: 1px solid #facc1555;
         }
-        
         .confetti-container {
             position: fixed;
             top: 0;
@@ -437,12 +404,10 @@
             0% { opacity: 1; transform: translateY(-20px) rotate(0deg); }
             100% { opacity: 0; transform: translateY(105vh) rotate(720deg); }
         }
-        
         @media (max-width: 600px) {
             .title { font-size: 1.5rem; }
             .letter-display { font-size: 3rem; }
             .host-controls .btn { min-width: 80px; font-size: 0.8rem; padding: 8px 12px; }
-            .vote-item { flex-wrap: wrap; gap: 8px; }
         }
     </style>
 </head>
@@ -488,17 +453,15 @@
                     </button>
                 </div>
 
-                <!-- Área de votación -->
                 <div id="votingArea" class="voting-area hidden">
                     <h3>📋 Votación de palabras</h3>
                     <div id="votingList"></div>
-                    <div id="votingStatus" class="vote-progress" style="margin-top:10px;"></div>
+                    <div id="votingStatus" class="vote-progress"></div>
                 </div>
 
                 <div id="resultsContainer" class="hidden">
                     <h3 style="color:#facc15;margin-top:10px;">📊 Resultados</h3>
                     <div id="resultsContent"></div>
-                    
                     <div id="hostControls" class="host-controls hidden">
                         <div class="host-controls-label">👑 Controles del Anfitrión</div>
                         <button class="btn btn-success" id="nextRoundBtn"><i class="fas fa-forward"></i> Siguiente Ronda</button>
@@ -550,20 +513,19 @@
 <div class="confetti-container" id="confettiContainer"></div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 <script>
     (function() {
-        // ---------- DOM ELEMENTS ----------
+        // DOM Elements
         const statusBar = document.getElementById('statusBar');
         const roomInput = document.getElementById('roomInput');
         const createBtn = document.getElementById('createBtn');
         const joinBtn = document.getElementById('joinBtn');
-        
         const gameArea = document.getElementById('gameArea');
         const waitingArea = document.getElementById('waitingArea');
         const playersList = document.getElementById('playersList');
         const playerCount = document.getElementById('playerCount');
         const maxPlayersDisplay = document.getElementById('maxPlayersDisplay');
-        
         const currentLetter = document.getElementById('currentLetter');
         const timerDisplay = document.getElementById('timerDisplay');
         const answersGrid = document.getElementById('answersGrid');
@@ -573,24 +535,20 @@
         const hostControls = document.getElementById('hostControls');
         const nextRoundBtn = document.getElementById('nextRoundBtn');
         const finishGameBtn = document.getElementById('finishGameBtn');
-        
         const votingArea = document.getElementById('votingArea');
         const votingList = document.getElementById('votingList');
         const votingStatus = document.getElementById('votingStatus');
-        
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
         const chatSendBtn = document.getElementById('chatSendBtn');
-        
         const maxRoundsInput = document.getElementById('maxRoundsInput');
         const timeLimitInput = document.getElementById('timeLimitInput');
         const applyConfigBtn = document.getElementById('applyConfigBtn');
-        
         const confettiContainer = document.getElementById('confettiContainer');
 
         const CATEGORIES = ['NOMBRE', 'APELLIDO', 'COSA', 'COLOR', 'FRUTA', 'PAÍS/CIUDAD', 'ANIMAL'];
 
-        // ---------- ESTADO ----------
+        // Estado
         let socket = null;
         let gameId = '';
         let playerName = '';
@@ -598,37 +556,9 @@
         let gameState = null;
         let isHost = false;
         let roundActive = false;
-        let currentAnswers = {};
-        let myVotes = {};
         let votingActive = false;
 
-        // ---------- CONFETI ----------
-        function launchConfetti() {
-            const colors = ['#facc15', '#4ade80', '#f87171', '#60a5fa', '#c084fc', '#fb923c', '#f472b6', '#22d3ee'];
-            const container = confettiContainer;
-            container.innerHTML = '';
-            
-            for (let i = 0; i < 150; i++) {
-                const confetti = document.createElement('div');
-                confetti.className = 'confetti';
-                confetti.style.left = Math.random() * 100 + '%';
-                confetti.style.top = '-10px';
-                confetti.style.width = (Math.random() * 8 + 4) + 'px';
-                confetti.style.height = (Math.random() * 8 + 4) + 'px';
-                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-                confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
-                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
-                confetti.style.animationDelay = (Math.random() * 2) + 's';
-                confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
-                container.appendChild(confetti);
-            }
-            
-            setTimeout(() => {
-                container.innerHTML = '';
-            }, 5000);
-        }
-
-        // ---------- FUNCIONES UI ----------
+        // Funciones UI
         function updateStatus(message, type) {
             const icons = { 'connected': '🟢', 'waiting': '🟡', 'error': '🔴', 'playing': '🎮', 'ready': '🎯' };
             statusBar.innerHTML = `${icons[type] || '📌'} ${message}`;
@@ -655,7 +585,6 @@
                 answersGrid.innerHTML = '<div style="color:#64748b;text-align:center;padding:20px;">Esperando ronda...</div>';
                 return;
             }
-            
             categories.forEach(cat => {
                 const div = document.createElement('div');
                 div.className = 'answer-input';
@@ -666,12 +595,10 @@
                 input.maxLength = 30;
                 input.autocomplete = 'off';
                 input.disabled = !roundActive;
-                
                 if (answers && answers[cat]) {
                     input.value = answers[cat];
                     input.classList.add('saved');
                 }
-                
                 input.addEventListener('blur', () => {
                     const val = input.value.trim().toUpperCase();
                     if (val.length > 0 && roundActive) {
@@ -680,7 +607,6 @@
                         input.style.borderColor = '#4ade80';
                     }
                 });
-                
                 div.innerHTML = `<label for="answer_${cat}">${cat}</label>`;
                 div.appendChild(input);
                 answersGrid.appendChild(div);
@@ -689,7 +615,6 @@
 
         function renderResults(results, letter, categories, roundNumber, maxRounds) {
             resultsContainer.classList.remove('hidden');
-            
             if (isHost) {
                 hostControls.classList.remove('hidden');
                 if (roundNumber >= maxRounds) {
@@ -700,7 +625,6 @@
             } else {
                 hostControls.classList.add('hidden');
             }
-            
             let html = `<div style="color:#94a3b8;font-size:0.8rem;margin-bottom:8px;">
                 Ronda ${roundNumber}/${maxRounds} · Letra: <strong style="color:#facc15;">${letter}</strong>
             </div>`;
@@ -714,9 +638,7 @@
                     </tr>
                 </thead>
                 <tbody>`;
-            
             const sortedResults = [...results].sort((a, b) => b.points - a.points);
-            
             sortedResults.forEach((r, index) => {
                 const isWinner = index === 0 && r.points > 0;
                 html += `<tr class="${isWinner ? 'winner-row' : ''}">
@@ -739,9 +661,7 @@
                 html += `<td>${r.stopped ? '🛑' : '-'}</td>`;
                 html += `</tr>`;
             });
-            
             html += `</tbody></table>`;
-            
             html += `<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:16px;">
                 <div style="color:#94a3b8;font-size:0.7rem;text-align:center;">🏆 Clasificación actual</div>`;
             const sortedScores = [...results].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
@@ -753,15 +673,12 @@
                 </div>`;
             });
             html += `</div>`;
-            
             resultsContent.innerHTML = html;
         }
 
         function renderVoting(words) {
             votingArea.classList.remove('hidden');
             votingList.innerHTML = '';
-            myVotes = {};
-            
             words.forEach(item => {
                 const div = document.createElement('div');
                 div.className = 'vote-item';
@@ -772,13 +689,11 @@
                         <span class="category">(${item.category})</span>
                     </div>
                     <div class="vote-btns">
-                        <button class="yes" data-word="${item.word}" data-vote="yes">✅ Sí</button>
-                        <button class="no" data-word="${item.word}" data-vote="no">❌ No</button>
+                        <button class="btn-vote-yes" data-word="${item.word}" data-vote="yes">✅ Sí</button>
+                        <button class="btn-vote-no" data-word="${item.word}" data-vote="no">❌ No</button>
                     </div>
                 `;
                 votingList.appendChild(div);
-                
-                // Eventos de votación
                 div.querySelectorAll('.vote-btns button').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const word = btn.dataset.word;
@@ -786,8 +701,6 @@
                         const wordDiv = document.getElementById(`vote_${word}`);
                         wordDiv.querySelectorAll('.vote-btns button').forEach(b => b.classList.remove('selected'));
                         btn.classList.add('selected');
-                        
-                        myVotes[word] = vote;
                         socket.emit('voteWord', { 
                             gameId, 
                             playerId: socket.id, 
@@ -798,7 +711,6 @@
                     });
                 });
             });
-            
             votingStatus.textContent = '🗳️ Vota si cada palabra es válida para su categoría';
         }
 
@@ -834,7 +746,6 @@
         function updateGameUI(state) {
             gameState = state;
             if (!state) return;
-            
             if (state.gameStarted) {
                 gameArea.classList.add('active');
                 waitingArea.classList.add('hidden');
@@ -845,9 +756,7 @@
                     hostControls.classList.add('hidden');
                 }
             }
-            
             currentLetter.textContent = state.currentLetter || '?';
-            
             if (state.roundActive && state.timeLeft !== undefined) {
                 const t = state.timeLeft;
                 timerDisplay.textContent = `⏱️ ${t}s`;
@@ -856,10 +765,8 @@
                 timerDisplay.textContent = '⏱️ 0s';
                 timerDisplay.className = 'timer-display';
             }
-            
             const canStop = state.roundActive && state.gameStarted && state.phase === 'playing' && !state.waitingForNextRound;
             stopBtn.disabled = !canStop;
-            
             if (state.phase === 'results') {
                 // Ya se muestra con roundResults
             } else if (state.roundActive && state.phase === 'playing') {
@@ -867,12 +774,10 @@
             } else {
                 renderAnswers(CATEGORIES, '', false);
             }
-            
             if (state.players) {
                 renderPlayers(state.players);
                 maxPlayersDisplay.textContent = state.maxPlayers || 8;
             }
-            
             if (isHost && !state.gameStarted && state.phase !== 'finished') {
                 document.getElementById('configArea').style.display = 'flex';
                 maxRoundsInput.value = state.maxRounds || 5;
@@ -880,7 +785,6 @@
             } else {
                 document.getElementById('configArea').style.display = 'none';
             }
-            
             const startBtn = document.getElementById('startGameBtn');
             if (isHost && !state.gameStarted && state.phase !== 'finished' && state.players && state.players.filter(p => p.connected).length >= 2) {
                 if (!document.getElementById('startGameBtn')) {
@@ -901,6 +805,26 @@
             }
         }
 
+        function launchConfetti() {
+            const colors = ['#facc15', '#4ade80', '#f87171', '#60a5fa', '#c084fc', '#fb923c', '#f472b6', '#22d3ee'];
+            confettiContainer.innerHTML = '';
+            for (let i = 0; i < 150; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.top = '-10px';
+                confetti.style.width = (Math.random() * 8 + 4) + 'px';
+                confetti.style.height = (Math.random() * 8 + 4) + 'px';
+                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                confetti.style.animationDelay = (Math.random() * 2) + 's';
+                confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+                confettiContainer.appendChild(confetti);
+            }
+            setTimeout(() => { confettiContainer.innerHTML = ''; }, 5000);
+        }
+
         function showWinnerConfetti(winnerName) {
             addChatMessage('Sistema', `🏆 ${winnerName} ha ganado la partida! 🎉`, true);
             launchConfetti();
@@ -909,7 +833,7 @@
             }, 500);
         }
 
-        // ---------- SOCKET ----------
+        // Socket
         function setupSocketListeners() {
             if (!socket) return;
 
@@ -945,8 +869,6 @@
                 updateStatus(`🔤 Ronda ${data.round} - Letra: ${data.letter}`, 'playing');
                 renderAnswers(CATEGORIES, data.letter, true);
                 timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
-                currentAnswers = {};
-                myVotes = {};
             });
 
             socket.on('timerUpdate', (data) => {
@@ -974,34 +896,42 @@
                 showVoteResult(data);
             });
 
-            // ---------- EN LA CONFIGURACIÓN DE SOCKET ----------
-socket.on('allVotesResolved', () => {
-    votingActive = false;
-    votingArea.classList.add('hidden');
-    updateStatus('✅ Votaciones completadas', 'connected');
-    addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
-    // El servidor ahora emite roundResults automáticamente después de las votaciones
-});
+            socket.on('allVotesResolved', () => {
+                votingActive = false;
+                votingArea.classList.add('hidden');
+                updateStatus('✅ Votaciones completadas', 'connected');
+                addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
+                // El servidor ahora emite roundResults automáticamente después de las votaciones
+            });
 
-// También asegúrate de que roundResults maneje correctamente la visualización:
-socket.on('roundResults', (data) => {
-    roundActive = false;
-    votingActive = false;
-    votingArea.classList.add('hidden');
-    renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
-    updateStatus('📊 Ronda finalizada', 'waiting');
-    stopBtn.disabled = true;
-    if (data.stopPlayerName) {
-        addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
-    }
-    if (data.roundNumber >= data.maxRounds) {
-        addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
-    }
-    // Mostrar botones de anfitrión si es host
-    if (isHost) {
-        hostControls.classList.remove('hidden');
-    }
-});
+            socket.on('roundResults', (data) => {
+                roundActive = false;
+                votingActive = false;
+                votingArea.classList.add('hidden');
+                renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
+                updateStatus('📊 Ronda finalizada', 'waiting');
+                stopBtn.disabled = true;
+                if (data.stopPlayerName) {
+                    addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
+                }
+                if (data.roundNumber >= data.maxRounds) {
+                    addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
+                }
+                if (isHost) {
+                    hostControls.classList.remove('hidden');
+                }
+            });
+
+            socket.on('gameFinished', (data) => {
+                updateStatus(`🏆 ${data.winner.name} ha ganado la partida!`, 'connected');
+                showWinnerConfetti(data.winner.name);
+                let msg = `🏆 ¡${data.winner.name} GANA con ${data.winner.score} puntos!\n\n`;
+                data.players.forEach(p => {
+                    msg += `${p.name}: ${p.score} pts\n`;
+                });
+                setTimeout(() => { alert(msg); }, 800);
+                hostControls.classList.add('hidden');
+            });
 
             socket.on('gameReset', () => {
                 updateStatus('🔄 Partida reiniciada', 'waiting');
@@ -1028,17 +958,15 @@ socket.on('roundResults', (data) => {
             });
         }
 
-        // ---------- ACCIONES ----------
+        // Acciones
         function createGame() {
             gameId = roomInput.value.trim().toUpperCase() || 'STOP';
             playerName = prompt('Ingresa tu nombre:', 'Anfitrión') || 'Anfitrión';
             if (!playerName) return;
-
             const serverUrl = window.location.origin;
             if (socket && connected) socket.disconnect();
             socket = io(serverUrl);
             setupSocketListeners();
-
             socket.emit('createGame', { gameId, playerName, maxPlayers: 8 });
             isHost = true;
             updateStatus(`🏠 Creando sala ${gameId}...`, 'waiting');
@@ -1048,18 +976,16 @@ socket.on('roundResults', (data) => {
             gameId = roomInput.value.trim().toUpperCase() || 'STOP';
             playerName = prompt('Ingresa tu nombre:', 'Jugador') || 'Jugador';
             if (!playerName) return;
-
             const serverUrl = window.location.origin;
             if (socket && connected) socket.disconnect();
             socket = io(serverUrl);
             setupSocketListeners();
-
             socket.emit('joinGame', { gameId, playerName });
             isHost = false;
             updateStatus(`🔗 Uniéndose a ${gameId}...`, 'waiting');
         }
 
-        // ---------- EVENTOS UI ----------
+        // Eventos UI
         createBtn.addEventListener('click', createGame);
         joinBtn.addEventListener('click', joinGame);
 
@@ -1114,7 +1040,7 @@ socket.on('roundResults', (data) => {
             }
         });
 
-        // ---------- INICIALIZACIÓN ----------
+        // Inicialización
         updateStatus('🔌 Conéctate al servidor', 'waiting');
         roomInput.value = 'STOP';
         renderAnswers([], '', false);
