@@ -30,30 +30,111 @@ const FIXED_CATEGORIES = [
     'ANIMAL'
 ];
 
+// =====================================================
+// VALIDACIÓN CON DATAMUSE (COINCIDENCIA EXACTA)
+// =====================================================
+
 async function validateWordWithDatamuse(word) {
     if (!word || word.length < 2) {
         return { valid: false, reason: 'Palabra demasiado corta' };
     }
 
     try {
-        const response = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=3`);
+        // Buscar coincidencia EXACTA con Datamuse
+        // Usamos "sp" para búsqueda por patrón y "max=1" para solo 1 resultado
+        const response = await fetch(
+            `https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=5&md=d`
+        );
         const data = await response.json();
         
         if (data && data.length > 0) {
+            // Verificar coincidencia exacta (case insensitive)
             const exactMatch = data.some(item => 
                 item.word && item.word.toUpperCase() === word.toUpperCase()
             );
             if (exactMatch) {
                 return { valid: true, reason: 'Palabra encontrada en Datamuse' };
             }
+            
+            // Si no hay coincidencia exacta pero la palabra tiene 4+ letras, 
+            // verificar si es una palabra compuesta o nombre propio
+            if (word.length >= 4 && data.some(item => 
+                item.word && item.word.toUpperCase().includes(word.toUpperCase())
+            )) {
+                return { valid: true, reason: 'Palabra relacionada encontrada' };
+            }
         }
         
-        return { valid: false, reason: 'Palabra no encontrada en Datamuse' };
+        // Si no se encuentra en Datamuse, intentar con la API de Wiktionary (español)
+        try {
+            const wikiResponse = await fetch(
+                `https://es.wiktionary.org/w/api.php?action=query&titles=${encodeURIComponent(word)}&format=json&origin=*`
+            );
+            const wikiData = await wikiResponse.json();
+            
+            if (wikiData.query && wikiData.query.pages) {
+                const pages = Object.values(wikiData.query.pages);
+                if (pages.some(p => !p.missing)) {
+                    return { valid: true, reason: 'Palabra encontrada en Wiktionary' };
+                }
+            }
+        } catch (e) {
+            console.log('Error en Wiktionary:', e.message);
+        }
+        
+        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
     } catch (error) {
         console.error('Error en Datamuse:', error);
         return { valid: false, reason: 'Error de conexión con Datamuse' };
     }
 }
+
+// =====================================================
+// VALIDACIÓN POR CATEGORÍA (con Datamuse)
+// =====================================================
+
+async function validateAnswerByCategory(answer, category, letter) {
+    if (!answer || answer.length < 2) {
+        return { valid: false, reason: 'Palabra demasiado corta' };
+    }
+
+    if (answer[0] !== letter) {
+        return { valid: false, reason: `No comienza con la letra ${letter}` };
+    }
+
+    // Para NOMBRE, APELLIDO, PAÍS/CIUDAD: aceptar si tiene 3+ letras (nombres propios)
+    if (category === 'NOMBRE' || category === 'APELLIDO' || category === 'PAÍS/CIUDAD') {
+        if (answer.length >= 3) {
+            // Verificar en Datamuse para confirmar
+            const result = await validateWordWithDatamuse(answer);
+            if (result.valid) {
+                return { valid: true, reason: 'Palabra válida' };
+            }
+            // Si no está en Datamuse pero es nombre propio (3+ letras), aceptar
+            return { valid: true, reason: 'Nombre propio aceptado' };
+        }
+        return { valid: false, reason: 'Nombre demasiado corto' };
+    }
+
+    // Para COLOR, FRUTA, ANIMAL, COSA: validar con Datamuse estrictamente
+    if (category === 'COLOR' || category === 'FRUTA' || category === 'ANIMAL' || category === 'COSA') {
+        const result = await validateWordWithDatamuse(answer);
+        if (result.valid) {
+            return { valid: true, reason: 'Palabra válida' };
+        }
+        // Si la palabra tiene 4+ letras y no está en Datamuse, dar opción de votación
+        if (answer.length >= 4) {
+            return { valid: false, reason: 'Palabra no encontrada en diccionario (requiere votación)', needsVote: true };
+        }
+        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
+    }
+
+    return await validateWordWithDatamuse(answer);
+}
+
+// =====================================================
+// SERVIDOR
+// =====================================================
 
 const games = {};
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -275,7 +356,7 @@ io.on('connection', (socket) => {
     });
 
     // =====================================================
-    // NUEVA REGLA: STOP solo si todas las casillas están llenas
+    // STOP: todas las casillas llenas
     // =====================================================
     socket.on('sayStop', (data) => {
         const { gameId } = data;
@@ -289,7 +370,7 @@ io.on('connection', (socket) => {
         const playerAnswers = game.answers[player.id];
         if (playerAnswers.stopped) return;
 
-        // VERIFICAR QUE TODAS LAS CASILLAS ESTÉN LLENAS
+        // Verificar que todas las casillas estén llenas
         const categories = game.categories;
         let allFilled = true;
         let emptyCategories = [];
@@ -306,22 +387,22 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Verificar que tenga al menos una respuesta válida (que empiece con la letra)
+        // Verificar que tenga al menos una respuesta válida
         let hasValidAnswer = false;
         for (let cat of categories) {
             const ans = playerAnswers.answers[cat] || '';
             if (ans.length > 0 && ans[0] === game.currentLetter) {
+                // Validación rápida (la validación final se hará en finishRound)
                 hasValidAnswer = true;
                 break;
             }
         }
 
         if (!hasValidAnswer) {
-            socket.emit('error', '❌ Debes tener al menos una respuesta válida (que comience con la letra) para decir STOP');
+            socket.emit('error', '❌ Debes tener al menos una respuesta válida para decir STOP');
             return;
         }
 
-        // Registrar STOP
         playerAnswers.stopped = true;
         playerAnswers.stoppedAt = Date.now();
         game.stopPlayer = player.id;
@@ -431,8 +512,6 @@ io.on('connection', (socket) => {
                 system: true
             });
             
-            console.log(`✅ Votaciones completadas en sala ${gameId}, calculando resultados...`);
-            
             setTimeout(() => {
                 forceFinishRound(gameId);
             }, 1000);
@@ -444,8 +523,6 @@ io.on('connection', (socket) => {
         if (!game) return;
         if (game.resultsCalculated) return;
 
-        console.log(`📊 Forzando finalización de ronda ${game.roundNumber} en sala ${gameId}`);
-        
         game.resultsCalculated = true;
         game.roundFinished = true;
         game.phase = 'results';
@@ -481,7 +558,6 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
-        console.log(`✅ Ronda ${game.roundNumber} finalizada correctamente en sala ${gameId}`);
     }
 
     // =====================================================
@@ -578,24 +654,25 @@ io.on('connection', (socket) => {
         return true;
     }
 
+    // =====================================================
+    // FINISH ROUND CON VALIDACIÓN POR DATAMUSE
+    // =====================================================
     async function finishRound(gameId) {
         const game = games[gameId];
         if (!game) return;
         if (game.phase === 'results' || game.roundFinished) return;
 
-        console.log(`📊 Finalizando ronda ${game.roundNumber} en sala ${gameId}`);
-        
         game.phase = 'results';
         game.roundActive = false;
         clearInterval(game.timer);
 
+        // Validar todas las respuestas con Datamuse
         const validationResults = await validateAllAnswers(game);
         game.validationResults = validationResults;
         
         const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
         
         if (wordsToVote.length > 0) {
-            console.log(`📋 Iniciando votación para ${wordsToVote.length} palabras en sala ${gameId}`);
             game.pendingVotes = {};
             game.voteResolved = false;
             game.votesStarted = true;
@@ -615,12 +692,12 @@ io.on('connection', (socket) => {
             
             io.to(gameId).emit('startVoting', {
                 words: wordsToVote,
-                message: '📋 Algunas palabras no se encontraron en Datamuse. ¡Voten si son válidas!'
+                message: '📋 Algunas palabras no se encontraron en el diccionario. ¡Voten si son válidas!'
             });
             
             io.to(gameId).emit('chatMessage', {
                 player: 'Sistema',
-                message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas en Datamuse`,
+                message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas en diccionario`,
                 system: true
             });
             
@@ -656,9 +733,11 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
-        console.log(`✅ Ronda ${game.roundNumber} finalizada correctamente`);
     }
 
+    // =====================================================
+    // VALIDACIÓN DE TODAS LAS RESPUESTAS CON DATAMUSE
+    // =====================================================
     async function validateAllAnswers(game) {
         const results = {};
         const players = game.players.filter(p => p.connected);
@@ -680,13 +759,14 @@ io.on('connection', (socket) => {
                     continue;
                 }
                 
-                const validation = await validateWordWithDatamuse(answer);
+                // Validar con Datamuse
+                const validation = await validateAnswerByCategory(answer, cat, game.currentLetter);
                 results[`${player.id}_${cat}`] = {
                     playerId: player.id,
                     category: cat,
                     word: answer,
                     valid: validation.valid,
-                    needsVote: !validation.valid,
+                    needsVote: validation.needsVote || false,
                     reason: validation.reason || ''
                 };
             }
@@ -742,14 +822,14 @@ io.on('connection', (socket) => {
     }
 
     // =====================================================
-    // NUEVA FUNCIÓN DE PUNTUACIÓN: 100 pts únicas, 50 pts repetidas
+    // CÁLCULO DE PUNTUACIÓN: 100 pts únicas, 50 pts repetidas
     // =====================================================
     function calculateRoundResults(game, validationResults) {
         const results = [];
         const players = game.players.filter(p => p.connected);
         const categories = game.categories;
         
-        // 1. Agrupar respuestas por categoría para detectar duplicados
+        // Agrupar respuestas por categoría
         const categoryAnswers = {};
         categories.forEach(cat => {
             categoryAnswers[cat] = {};
@@ -757,8 +837,10 @@ io.on('connection', (socket) => {
                 const playerAnswers = game.answers[p.id];
                 if (playerAnswers && playerAnswers.answers[cat]) {
                     const answer = playerAnswers.answers[cat];
-                    // Solo considerar respuestas válidas (que empiezan con la letra)
-                    if (answer && answer.length > 0 && answer[0] === game.currentLetter) {
+                    const key = `${p.id}_${cat}`;
+                    const validation = validationResults ? validationResults[key] : null;
+                    const isValid = validation ? validation.valid : false;
+                    if (answer && answer.length > 0 && answer[0] === game.currentLetter && isValid) {
                         if (!categoryAnswers[cat][answer]) {
                             categoryAnswers[cat][answer] = [];
                         }
@@ -768,7 +850,7 @@ io.on('connection', (socket) => {
             });
         });
 
-        // 2. Calcular puntos por jugador
+        // Calcular puntos
         players.forEach(p => {
             const playerAnswers = game.answers[p.id];
             if (!playerAnswers) {
@@ -791,18 +873,18 @@ io.on('connection', (socket) => {
                 const answer = playerAnswers.answers[cat] || '';
                 const key = `${p.id}_${cat}`;
                 const validation = validationResults ? validationResults[key] : null;
-                const isValid = validation ? validation.valid : (answer.length > 0 && answer[0] === game.currentLetter);
+                const isValid = validation ? validation.valid : false;
                 
-                const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
                 const startsWithLetter = answer.length > 0 && answer[0] === game.currentLetter;
+                const isUnique = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length === 1;
+                const isDuplicated = categoryAnswers[cat][answer] && categoryAnswers[cat][answer].length > 1;
                 
                 if (answer && isValid && startsWithLetter) {
-                    // NUEVA REGLA DE PUNTUACIÓN
                     let pts = 0;
                     if (isUnique) {
-                        pts = 100; // Única → 100 puntos
-                    } else {
-                        pts = 50;  // Repetida → 50 puntos
+                        pts = 100;
+                    } else if (isDuplicated) {
+                        pts = 50;
                     }
                     points += pts;
                     
@@ -810,9 +892,9 @@ io.on('connection', (socket) => {
                         answer, 
                         points: pts, 
                         unique: isUnique,
+                        duplicated: isDuplicated,
                         valid: true,
-                        voted: validation?.voted || false,
-                        duplicated: !isUnique
+                        voted: validation?.voted || false
                     };
                 } else if (answer) {
                     answerDetails[cat] = { 
@@ -833,7 +915,7 @@ io.on('connection', (socket) => {
                 }
             });
 
-            // BONIFICACIÓN POR STOP: +50 puntos si tiene respuestas válidas
+            // Bonificación por STOP: +50 puntos
             let hasValidAnswers = false;
             for (let cat of categories) {
                 const ans = playerAnswers.answers[cat];
@@ -848,7 +930,7 @@ io.on('connection', (socket) => {
             }
 
             if (stopped && hasValidAnswers) {
-                points += 50; // Bonificación por STOP
+                points += 50;
             }
 
             results.push({
