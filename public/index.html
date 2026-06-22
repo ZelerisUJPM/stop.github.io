@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>STOP Online - 7 Categorías</title>
+    <title>STOP Online - Con Votación</title>
     <style>
         * {
             box-sizing: border-box;
@@ -98,6 +98,10 @@
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-host { background: #8b5cf6; color: #fff; }
         .btn-host:hover { background: #7c3aed; }
+        .btn-vote-yes { background: #4ade80; color: #0f172a; }
+        .btn-vote-yes:hover { background: #22c55e; }
+        .btn-vote-no { background: #f87171; color: #0f172a; }
+        .btn-vote-no:hover { background: #ef4444; }
         
         .game-layout {
             display: grid;
@@ -264,16 +268,6 @@
         .answer-input input:focus { border-color: #facc15; }
         .answer-input input:disabled { opacity: 0.5; }
         .answer-input input.saved { border-color: #4ade80; background: #4ade8011; }
-        .answer-input input.validating { border-color: #60a5fa; background: #60a5fa11; }
-        .answer-input input.valid { border-color: #4ade80; background: #4ade8011; }
-        .answer-input input.invalid { border-color: #f87171; background: #f8717111; }
-        .answer-input .validation-badge {
-            font-size: 0.65rem;
-            margin-top: 2px;
-        }
-        .answer-input .validation-badge.valid { color: #4ade80; }
-        .answer-input .validation-badge.invalid { color: #f87171; }
-        .answer-input .validation-badge.checking { color: #60a5fa; }
         
         .stop-area {
             text-align: center;
@@ -355,6 +349,56 @@
             width: 100%;
         }
         
+        .voting-area {
+            background: #0f172a;
+            border-radius: 20px;
+            padding: 20px;
+            margin: 15px 0;
+            border: 2px solid #facc15;
+        }
+        .voting-area h3 {
+            color: #facc15;
+            margin-bottom: 10px;
+        }
+        .vote-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #1e293b;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .vote-item .word {
+            color: #e2e8f0;
+            font-weight: bold;
+        }
+        .vote-item .category {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        .vote-item .vote-btns {
+            display: flex;
+            gap: 8px;
+        }
+        .vote-item .vote-btns button {
+            padding: 4px 14px;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+        }
+        .vote-item .vote-btns .yes { background: #4ade80; color: #0f172a; }
+        .vote-item .vote-btns .no { background: #f87171; color: #0f172a; }
+        .vote-item .vote-btns .yes.selected { background: #22c55e; box-shadow: 0 0 10px #4ade80; }
+        .vote-item .vote-btns .no.selected { background: #dc2626; box-shadow: 0 0 10px #f87171; }
+        .vote-item .vote-btns button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .vote-progress {
+            color: #94a3b8;
+            font-size: 0.7rem;
+        }
+        
         .hidden { display: none !important; }
         .flex-center { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
         
@@ -372,7 +416,6 @@
             border: 1px solid #facc1555;
         }
         
-        /* CONFETI */
         .confetti-container {
             position: fixed;
             top: 0;
@@ -391,20 +434,15 @@
             animation: confettiFall linear forwards;
         }
         @keyframes confettiFall {
-            0% {
-                opacity: 1;
-                transform: translateY(-20px) rotate(0deg);
-            }
-            100% {
-                opacity: 0;
-                transform: translateY(105vh) rotate(720deg);
-            }
+            0% { opacity: 1; transform: translateY(-20px) rotate(0deg); }
+            100% { opacity: 0; transform: translateY(105vh) rotate(720deg); }
         }
         
         @media (max-width: 600px) {
             .title { font-size: 1.5rem; }
             .letter-display { font-size: 3rem; }
             .host-controls .btn { min-width: 80px; font-size: 0.8rem; padding: 8px 12px; }
+            .vote-item { flex-wrap: wrap; gap: 8px; }
         }
     </style>
 </head>
@@ -450,11 +488,17 @@
                     </button>
                 </div>
 
+                <!-- Área de votación -->
+                <div id="votingArea" class="voting-area hidden">
+                    <h3>📋 Votación de palabras</h3>
+                    <div id="votingList"></div>
+                    <div id="votingStatus" class="vote-progress" style="margin-top:10px;"></div>
+                </div>
+
                 <div id="resultsContainer" class="hidden">
                     <h3 style="color:#facc15;margin-top:10px;">📊 Resultados</h3>
                     <div id="resultsContent"></div>
                     
-                    <!-- Controles del anfitrión -->
                     <div id="hostControls" class="host-controls hidden">
                         <div class="host-controls-label">👑 Controles del Anfitrión</div>
                         <button class="btn btn-success" id="nextRoundBtn"><i class="fas fa-forward"></i> Siguiente Ronda</button>
@@ -503,7 +547,6 @@
     </div>
 </div>
 
-<!-- CONTENEDOR DE CONFETI -->
 <div class="confetti-container" id="confettiContainer"></div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
@@ -531,6 +574,10 @@
         const nextRoundBtn = document.getElementById('nextRoundBtn');
         const finishGameBtn = document.getElementById('finishGameBtn');
         
+        const votingArea = document.getElementById('votingArea');
+        const votingList = document.getElementById('votingList');
+        const votingStatus = document.getElementById('votingStatus');
+        
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
         const chatSendBtn = document.getElementById('chatSendBtn');
@@ -552,38 +599,8 @@
         let isHost = false;
         let roundActive = false;
         let currentAnswers = {};
-        let validationResults = {};
-
-        // ---------- VALIDACIÓN CON INTERNET ----------
-        async function validateWord(word, category) {
-            if (!word || word.length < 2) return { valid: false, message: 'Palabra muy corta' };
-            
-            try {
-                // Usar la API de Diccionario para validar palabras en español
-                const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word.toLowerCase()}`);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        return { valid: true, message: '✅ Palabra válida' };
-                    }
-                }
-                
-                // Si no se encuentra en inglés, probar con español (usando otra API)
-                try {
-                    const spanishResponse = await fetch(`https://api.datamuse.com/words?sp=${word.toLowerCase()}&md=d`);
-                    const spanishData = await spanishResponse.json();
-                    if (spanishData && spanishData.length > 0) {
-                        return { valid: true, message: '✅ Palabra válida' };
-                    }
-                } catch (e) {}
-                
-                return { valid: false, message: '❌ Palabra no encontrada' };
-            } catch (error) {
-                console.error('Error validando palabra:', error);
-                return { valid: false, message: '⚠️ Error en validación' };
-            }
-        }
+        let myVotes = {};
+        let votingActive = false;
 
         // ---------- CONFETI ----------
         function launchConfetti() {
@@ -632,14 +649,14 @@
             playerCount.textContent = players.filter(p => p.connected).length;
         }
 
-        async function renderAnswers(categories, letter, roundActive, answers) {
+        function renderAnswers(categories, letter, roundActive, answers) {
             answersGrid.innerHTML = '';
             if (!roundActive || !categories) {
                 answersGrid.innerHTML = '<div style="color:#64748b;text-align:center;padding:20px;">Esperando ronda...</div>';
                 return;
             }
             
-            for (let cat of categories) {
+            categories.forEach(cat => {
                 const div = document.createElement('div');
                 div.className = 'answer-input';
                 const input = document.createElement('input');
@@ -655,51 +672,26 @@
                     input.classList.add('saved');
                 }
                 
-                const badge = document.createElement('div');
-                badge.className = 'validation-badge';
-                badge.id = `badge_${cat}`;
-                
-                input.addEventListener('blur', async () => {
+                input.addEventListener('blur', () => {
                     const val = input.value.trim().toUpperCase();
                     if (val.length > 0 && roundActive) {
-                        input.classList.add('validating');
-                        badge.textContent = '⏳ Validando...';
-                        badge.className = 'validation-badge checking';
-                        
-                        const result = await validateWord(val, cat);
-                        validationResults[cat] = result;
-                        
-                        if (result.valid) {
-                            input.classList.remove('validating');
-                            input.classList.add('valid');
-                            badge.textContent = '✅ Válida';
-                            badge.className = 'validation-badge valid';
-                        } else {
-                            input.classList.remove('validating');
-                            input.classList.add('invalid');
-                            badge.textContent = '❌ ' + result.message;
-                            badge.className = 'validation-badge invalid';
-                        }
-                        
                         socket.emit('sendAnswer', { gameId, category: cat, answer: val });
                         input.classList.add('saved');
+                        input.style.borderColor = '#4ade80';
                     }
                 });
                 
                 div.innerHTML = `<label for="answer_${cat}">${cat}</label>`;
                 div.appendChild(input);
-                div.appendChild(badge);
                 answersGrid.appendChild(div);
-            }
+            });
         }
 
         function renderResults(results, letter, categories, roundNumber, maxRounds) {
             resultsContainer.classList.remove('hidden');
             
-            // Mostrar controles del anfitrión
             if (isHost) {
                 hostControls.classList.remove('hidden');
-                // Si es la última ronda, cambiar texto del botón
                 if (roundNumber >= maxRounds) {
                     nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Ver Resultados Finales';
                 } else {
@@ -723,7 +715,6 @@
                 </thead>
                 <tbody>`;
             
-            // Ordenar por puntos (mayor a menor)
             const sortedResults = [...results].sort((a, b) => b.points - a.points);
             
             sortedResults.forEach((r, index) => {
@@ -735,10 +726,11 @@
                     if (ans) {
                         let color = '#94a3b8';
                         let extra = '';
+                        let title = '';
                         if (ans.unique) { color = '#4ade80'; extra = ' ✅'; }
                         else if (ans.duplicated) { color = '#f87171'; extra = ' 🔄'; }
-                        else if (ans.invalid) { color = '#f87171'; extra = ' ❌'; }
-                        html += `<td style="color:${color};font-size:0.75rem;">${ans.answer}${extra}</td>`;
+                        else if (ans.invalid) { color = '#f87171'; extra = ' ❌'; title = ans.reason || ''; }
+                        html += `<td style="color:${color};font-size:0.75rem;" title="${title}">${ans.answer}${extra}</td>`;
                     } else {
                         html += `<td style="color:#64748b;">-</td>`;
                     }
@@ -750,7 +742,6 @@
             
             html += `</tbody></table>`;
             
-            // Mostrar clasificación actual
             html += `<div style="margin-top:10px;padding:10px;background:#0f172a;border-radius:16px;">
                 <div style="color:#94a3b8;font-size:0.7rem;text-align:center;">🏆 Clasificación actual</div>`;
             const sortedScores = [...results].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
@@ -764,6 +755,68 @@
             html += `</div>`;
             
             resultsContent.innerHTML = html;
+        }
+
+        function renderVoting(words) {
+            votingArea.classList.remove('hidden');
+            votingList.innerHTML = '';
+            myVotes = {};
+            
+            words.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'vote-item';
+                div.id = `vote_${item.word}`;
+                div.innerHTML = `
+                    <div>
+                        <span class="word">${item.word}</span>
+                        <span class="category">(${item.category})</span>
+                    </div>
+                    <div class="vote-btns">
+                        <button class="yes" data-word="${item.word}" data-vote="yes">✅ Sí</button>
+                        <button class="no" data-word="${item.word}" data-vote="no">❌ No</button>
+                    </div>
+                `;
+                votingList.appendChild(div);
+                
+                // Eventos de votación
+                div.querySelectorAll('.vote-btns button').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const word = btn.dataset.word;
+                        const vote = btn.dataset.vote === 'yes';
+                        const wordDiv = document.getElementById(`vote_${word}`);
+                        wordDiv.querySelectorAll('.vote-btns button').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                        
+                        myVotes[word] = vote;
+                        socket.emit('voteWord', { 
+                            gameId, 
+                            playerId: socket.id, 
+                            word: word, 
+                            category: item.category, 
+                            vote: vote 
+                        });
+                    });
+                });
+            });
+            
+            votingStatus.textContent = '🗳️ Vota si cada palabra es válida para su categoría';
+        }
+
+        function updateVoteProgress(data) {
+            votingStatus.textContent = `📊 ${data.votesFor} a favor, ${data.votesAgainst} en contra · ${data.remaining} jugadores restantes`;
+        }
+
+        function showVoteResult(data) {
+            const wordDiv = document.getElementById(`vote_${data.word}`);
+            if (wordDiv) {
+                const status = document.createElement('span');
+                status.style.marginLeft = '10px';
+                status.style.fontWeight = 'bold';
+                status.style.color = data.approved ? '#4ade80' : '#f87171';
+                status.textContent = data.approved ? '✅ APROBADA' : '❌ RECHAZADA';
+                wordDiv.querySelector('.word').after(status);
+                wordDiv.querySelectorAll('.vote-btns button').forEach(b => b.disabled = true);
+            }
         }
 
         function addChatMessage(player, message, system) {
@@ -788,7 +841,6 @@
             } else {
                 gameArea.classList.remove('active');
                 waitingArea.classList.remove('hidden');
-                // Si la partida terminó, mostrar controls ocultos
                 if (state.phase === 'finished') {
                     hostControls.classList.add('hidden');
                 }
@@ -829,7 +881,6 @@
                 document.getElementById('configArea').style.display = 'none';
             }
             
-            // Botón iniciar para el host
             const startBtn = document.getElementById('startGameBtn');
             if (isHost && !state.gameStarted && state.phase !== 'finished' && state.players && state.players.filter(p => p.connected).length >= 2) {
                 if (!document.getElementById('startGameBtn')) {
@@ -850,12 +901,9 @@
             }
         }
 
-        // ---------- CONFETI PARA GANADOR ----------
         function showWinnerConfetti(winnerName) {
             addChatMessage('Sistema', `🏆 ${winnerName} ha ganado la partida! 🎉`, true);
             launchConfetti();
-            
-            // Mostrar alerta con el ganador
             setTimeout(() => {
                 alert(`🏆 ${winnerName} ha ganado la partida! 🎉🎊`);
             }, 500);
@@ -890,13 +938,15 @@
 
             socket.on('roundStarted', (data) => {
                 roundActive = true;
+                votingActive = false;
+                votingArea.classList.add('hidden');
                 resultsContainer.classList.add('hidden');
                 hostControls.classList.add('hidden');
                 updateStatus(`🔤 Ronda ${data.round} - Letra: ${data.letter}`, 'playing');
                 renderAnswers(CATEGORIES, data.letter, true);
                 timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
                 currentAnswers = {};
-                validationResults = {};
+                myVotes = {};
             });
 
             socket.on('timerUpdate', (data) => {
@@ -908,16 +958,39 @@
                 addChatMessage('Sistema', `🛑 ${data.playerName} ha dicho STOP!`, true);
             });
 
+            socket.on('startVoting', (data) => {
+                votingActive = true;
+                renderVoting(data.words);
+                addChatMessage('Sistema', data.message, true);
+                updateStatus('🗳️ Votación en curso', 'waiting');
+                stopBtn.disabled = true;
+            });
+
+            socket.on('voteProgress', (data) => {
+                updateVoteProgress(data);
+            });
+
+            socket.on('voteResult', (data) => {
+                showVoteResult(data);
+            });
+
+            socket.on('allVotesResolved', () => {
+                votingActive = false;
+                votingArea.classList.add('hidden');
+                updateStatus('✅ Votaciones completadas', 'connected');
+                addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
+            });
+
             socket.on('roundResults', (data) => {
                 roundActive = false;
+                votingActive = false;
+                votingArea.classList.add('hidden');
                 renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
                 updateStatus('📊 Ronda finalizada', 'waiting');
                 stopBtn.disabled = true;
                 if (data.stopPlayerName) {
                     addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
                 }
-                
-                // Si es la última ronda, mostrar mensaje
                 if (data.roundNumber >= data.maxRounds) {
                     addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
                 }
@@ -935,7 +1008,6 @@
                     alert(msg);
                 }, 800);
                 
-                // Ocultar controles del host
                 hostControls.classList.add('hidden');
             });
 
@@ -943,6 +1015,7 @@
                 updateStatus('🔄 Partida reiniciada', 'waiting');
                 resultsContainer.classList.add('hidden');
                 hostControls.classList.add('hidden');
+                votingArea.classList.add('hidden');
                 renderAnswers([], '', false);
                 confettiContainer.innerHTML = '';
             });
@@ -1021,7 +1094,7 @@
         });
 
         stopBtn.addEventListener('click', () => {
-            if (socket && connected && roundActive) {
+            if (socket && connected && roundActive && !votingActive) {
                 socket.emit('sayStop', { gameId });
                 stopBtn.disabled = true;
             }
@@ -1035,7 +1108,6 @@
             }
         });
 
-        // Botones del anfitrión
         nextRoundBtn.addEventListener('click', () => {
             if (socket && connected && isHost) {
                 socket.emit('nextRound', { gameId });
@@ -1056,6 +1128,7 @@
         renderAnswers([], '', false);
         renderPlayers([]);
         hostControls.classList.add('hidden');
+        votingArea.classList.add('hidden');
     })();
 </script>
 </body>
