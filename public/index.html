@@ -30,7 +30,6 @@
             margin-bottom: 5px;
             letter-spacing: 3px;
         }
-        .title i { margin-right: 12px; }
         .subtitle {
             text-align: center;
             color: #94a3b8;
@@ -414,7 +413,7 @@
 <body>
 
 <div class="app">
-    <div class="title"><i class="fas fa-stop-circle"></i> STOP Online</div>
+    <div class="title">🛑 STOP Online</div>
     <div class="subtitle">📋 NOMBRE · APELLIDO · COSA · COLOR · FRUTA · PAÍS/CIUDAD · ANIMAL</div>
     
     <div class="status-bar" id="statusBar">
@@ -423,8 +422,8 @@
 
     <div class="room-controls">
         <input type="text" id="roomInput" placeholder="Código de sala" value="STOP" maxlength="20">
-        <button class="btn btn-success" id="createBtn"><i class="fas fa-plus"></i> Crear Sala</button>
-        <button class="btn btn-primary" id="joinBtn"><i class="fas fa-sign-in-alt"></i> Unirse</button>
+        <button class="btn btn-success" id="createBtn">➕ Crear Sala</button>
+        <button class="btn btn-primary" id="joinBtn">🔗 Unirse</button>
     </div>
 
     <div class="game-layout">
@@ -449,7 +448,7 @@
 
                 <div class="stop-area" id="stopArea">
                     <button class="btn btn-stop" id="stopBtn" disabled>
-                        <i class="fas fa-hand-paper"></i> STOP
+                        🛑 STOP
                     </button>
                 </div>
 
@@ -464,15 +463,15 @@
                     <div id="resultsContent"></div>
                     <div id="hostControls" class="host-controls hidden">
                         <div class="host-controls-label">👑 Controles del Anfitrión</div>
-                        <button class="btn btn-success" id="nextRoundBtn"><i class="fas fa-forward"></i> Siguiente Ronda</button>
-                        <button class="btn btn-danger" id="finishGameBtn"><i class="fas fa-flag-checkered"></i> Finalizar Partida</button>
+                        <button class="btn btn-success" id="nextRoundBtn">▶ Siguiente Ronda</button>
+                        <button class="btn btn-danger" id="finishGameBtn">🏁 Finalizar Partida</button>
                     </div>
                 </div>
             </div>
 
             <div id="waitingArea">
                 <div style="text-align:center;padding:30px 0;color:#94a3b8;">
-                    <i class="fas fa-users" style="font-size:3rem;color:#facc15;"></i>
+                    <div style="font-size:3rem;color:#facc15;">👥</div>
                     <p style="margin-top:15px;">Esperando a que el anfitrión inicie la partida</p>
                     <p style="font-size:0.8rem;">Mínimo 2 jugadores</p>
                 </div>
@@ -513,7 +512,6 @@
 <div class="confetti-container" id="confettiContainer"></div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 <script>
     (function() {
         // DOM Elements
@@ -618,9 +616,9 @@
             if (isHost) {
                 hostControls.classList.remove('hidden');
                 if (roundNumber >= maxRounds) {
-                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Ver Resultados Finales';
+                    nextRoundBtn.innerHTML = '▶ Ver Resultados Finales';
                 } else {
-                    nextRoundBtn.innerHTML = '<i class="fas fa-forward"></i> Siguiente Ronda';
+                    nextRoundBtn.innerHTML = '▶ Siguiente Ronda';
                 }
             } else {
                 hostControls.classList.add('hidden');
@@ -793,7 +791,7 @@
                     btn.className = 'btn btn-success';
                     btn.style.width = '100%';
                     btn.style.marginTop = '10px';
-                    btn.innerHTML = '<i class="fas fa-play"></i> Iniciar Partida';
+                    btn.innerHTML = '▶ Iniciar Partida';
                     btn.addEventListener('click', () => {
                         socket.emit('startGame', { gameId });
                     });
@@ -901,7 +899,6 @@
                 votingArea.classList.add('hidden');
                 updateStatus('✅ Votaciones completadas', 'connected');
                 addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
-                // El servidor ahora emite roundResults automáticamente después de las votaciones
             });
 
             socket.on('roundResults', (data) => {
