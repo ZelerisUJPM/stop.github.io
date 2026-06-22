@@ -31,7 +31,7 @@ const FIXED_CATEGORIES = [
 ];
 
 // =====================================================
-// VALIDACIÓN CON DATAMUSE + VOTACIÓN
+// VALIDACIÓN CON DATAMUSE
 // =====================================================
 
 async function validateWordWithDatamuse(word) {
@@ -52,17 +52,15 @@ async function validateWordWithDatamuse(word) {
             }
         }
         
-        // No encontrada en Datamuse → requiere votación
         return { valid: false, reason: 'Palabra no encontrada en Datamuse' };
     } catch (error) {
         console.error('Error en Datamuse:', error);
-        // Si falla la API, también requiere votación
         return { valid: false, reason: 'Error de conexión con Datamuse' };
     }
 }
 
 // =====================================================
-// RESTO DEL SERVIDOR
+// SERVIDOR
 // =====================================================
 
 const games = {};
@@ -97,9 +95,9 @@ io.on('connection', (socket) => {
             gameStarted: false,
             roundNumber: 0,
             waitingForNextRound: false,
-            // Votaciones
             pendingVotes: {},
-            voteResults: {}
+            voteResolved: false,
+            validationResults: null
         };
 
         const game = games[gameId];
@@ -183,7 +181,8 @@ io.on('connection', (socket) => {
         game.players.forEach(p => p.score = 0);
         game.waitingForNextRound = false;
         game.pendingVotes = {};
-        game.voteResults = {};
+        game.voteResolved = false;
+        game.validationResults = null;
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -209,7 +208,8 @@ io.on('connection', (socket) => {
         game.timeLeft = game.timeLimit || 60;
         game.waitingForNextRound = false;
         game.pendingVotes = {};
-        game.voteResults = {};
+        game.voteResolved = false;
+        game.validationResults = null;
 
         const availableLetters = LETTERS.split('');
         game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
@@ -332,27 +332,26 @@ io.on('connection', (socket) => {
         const voteData = game.pendingVotes[word];
         if (voteData.resolved) return;
 
-        // Registrar voto
         if (!voteData.votes[playerId]) {
             voteData.votes[playerId] = vote;
             voteData.total++;
         } else {
-            // Actualizar voto si cambió
             voteData.votes[playerId] = vote;
         }
 
-        // Calcular votos
         const votesFor = Object.values(voteData.votes).filter(v => v === true).length;
         const votesAgainst = Object.values(voteData.votes).filter(v => v === false).length;
         const totalVotes = Object.keys(voteData.votes).length;
         const activePlayers = game.players.filter(p => p.connected).length;
 
-        // Si todos los jugadores votaron o hay mayoría (2/3)
-        if (totalVotes >= activePlayers || votesFor >= Math.ceil(activePlayers * 2 / 3)) {
+        // Verificar si todos los jugadores votaron o hay mayoría (2/3)
+        const allVoted = totalVotes >= activePlayers;
+        const majorityReached = votesFor >= Math.ceil(activePlayers * 2 / 3);
+        
+        if (allVoted || majorityReached) {
             voteData.resolved = true;
             voteData.approved = votesFor > votesAgainst;
             
-            // Notificar resultado
             io.to(gameId).emit('voteResult', {
                 word: word,
                 category: category,
@@ -370,7 +369,6 @@ io.on('connection', (socket) => {
             // Verificar si todas las palabras pendientes están resueltas
             checkAllVotesResolved(gameId);
         } else {
-            // Informar progreso
             io.to(gameId).emit('voteProgress', {
                 word: word,
                 votesFor: votesFor,
@@ -387,9 +385,13 @@ io.on('connection', (socket) => {
 
         const allResolved = Object.values(game.pendingVotes).every(v => v.resolved === true);
         if (allResolved && Object.keys(game.pendingVotes).length > 0) {
-            // Todas las votaciones completadas, continuar con la ronda
+            game.voteResolved = true;
             io.to(gameId).emit('allVotesResolved', { success: true });
-            finishRound(gameId);
+            
+            // --- CORRECCIÓN: Calcular y mostrar resultados automáticamente ---
+            setTimeout(() => {
+                finishRoundWithVotes(gameId);
+            }, 500);
         }
     }
 
@@ -487,6 +489,51 @@ io.on('connection', (socket) => {
         return true;
     }
 
+    // ---------- NUEVA FUNCIÓN: Finalizar ronda con votaciones ----------
+    async function finishRoundWithVotes(gameId) {
+        const game = games[gameId];
+        if (!game) return;
+        if (game.phase === 'results') return;
+
+        game.phase = 'results';
+        game.roundActive = false;
+        clearInterval(game.timer);
+
+        // Aplicar resultados de votación
+        const validationResults = applyVoteResults(game);
+        
+        // Calcular resultados finales
+        const results = calculateRoundResults(game, validationResults);
+        
+        for (let result of results) {
+            const player = game.players.find(p => p.id === result.playerId);
+            if (player) {
+                player.score += result.points;
+                result.totalScore = player.score;
+            }
+        }
+
+        io.to(gameId).emit('roundResults', {
+            results: results,
+            letter: game.currentLetter,
+            categories: game.categories,
+            stopPlayer: game.stopPlayer,
+            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
+            roundNumber: game.roundNumber,
+            maxRounds: game.maxRounds,
+            votesApplied: true
+        });
+
+        io.to(gameId).emit('chatMessage', {
+            player: 'Sistema',
+            message: `📊 ¡Ronda ${game.roundNumber} finalizada con votaciones!`,
+            system: true
+        });
+
+        io.to(gameId).emit('gameState', getGameState(gameId));
+    }
+
+    // ---------- FUNCIÓN CORREGIDA: finishRound ----------
     async function finishRound(gameId) {
         const game = games[gameId];
         if (!game) return;
@@ -500,11 +547,12 @@ io.on('connection', (socket) => {
         const validationResults = await validateAllAnswers(game);
         
         // 2. Si hay palabras que necesitan votación, iniciar votación
-        const wordsToVote = Object.values(validationResults).filter(r => r.needsVote);
+        const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
         
         if (wordsToVote.length > 0) {
             // Iniciar votación
             game.pendingVotes = {};
+            game.voteResolved = false;
             wordsToVote.forEach(item => {
                 game.pendingVotes[item.word] = {
                     category: item.category,
@@ -526,7 +574,7 @@ io.on('connection', (socket) => {
                 system: true
             });
             
-            // No continuar hasta que terminen las votaciones
+            // No continuar hasta que terminen las votaciones (se maneja en checkAllVotesResolved)
             return;
         }
 
@@ -559,46 +607,6 @@ io.on('connection', (socket) => {
 
         io.to(gameId).emit('gameState', getGameState(gameId));
     }
-
-    // Cuando todas las votaciones se resuelven
-    socket.on('allVotesResolved', (data) => {
-        const { gameId } = data;
-        const game = games[gameId];
-        if (!game) return;
-
-        // Aplicar resultados de votación a las respuestas
-        const validationResults = applyVoteResults(game);
-        
-        // Calcular resultados finales
-        const results = calculateRoundResults(game, validationResults);
-        
-        for (let result of results) {
-            const player = game.players.find(p => p.id === result.playerId);
-            if (player) {
-                player.score += result.points;
-                result.totalScore = player.score;
-            }
-        }
-
-        io.to(gameId).emit('roundResults', {
-            results: results,
-            letter: game.currentLetter,
-            categories: game.categories,
-            stopPlayer: game.stopPlayer,
-            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
-            roundNumber: game.roundNumber,
-            maxRounds: game.maxRounds,
-            votesApplied: true
-        });
-
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `📊 ¡Ronda ${game.roundNumber} finalizada con votaciones!`,
-            system: true
-        });
-
-        io.to(gameId).emit('gameState', getGameState(gameId));
-    });
 
     async function validateAllAnswers(game) {
         const results = {};
@@ -648,7 +656,6 @@ io.on('connection', (socket) => {
                 const answer = playerAnswers.answers[cat] || '';
                 const key = `${player.id}_${cat}`;
                 
-                // Verificar si esta palabra estaba en votación
                 const voteData = game.pendingVotes[answer];
                 if (voteData && voteData.resolved) {
                     results[key] = {
@@ -661,7 +668,6 @@ io.on('connection', (socket) => {
                         approved: voteData.approved
                     };
                 } else if (answer.length > 0) {
-                    // Si no estaba en votación, asumir válida (ya pasó Datamuse)
                     results[key] = {
                         playerId: player.id,
                         category: cat,
@@ -689,7 +695,6 @@ io.on('connection', (socket) => {
         const players = game.players.filter(p => p.connected);
         const categories = game.categories;
         
-        // Agrupar respuestas por categoría para detectar duplicados
         const categoryAnswers = {};
         categories.forEach(cat => {
             categoryAnswers[cat] = {};
@@ -820,7 +825,8 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         game.waitingForNextRound = false;
         game.pendingVotes = {};
-        game.voteResults = {};
+        game.voteResolved = false;
+        game.validationResults = null;
         clearInterval(game.timer);
 
         io.to(gameId).emit('gameState', getGameState(gameId));
@@ -946,7 +952,8 @@ io.on('connection', (socket) => {
             stopPlayer: game.stopPlayer,
             totalPlayers: game.players.length,
             waitingForNextRound: game.waitingForNextRound,
-            pendingVotes: game.pendingVotes ? Object.keys(game.pendingVotes).length : 0
+            pendingVotes: game.pendingVotes ? Object.keys(game.pendingVotes).length : 0,
+            voteResolved: game.voteResolved
         };
     }
 
