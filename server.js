@@ -20,7 +20,6 @@ const io = socketIo(server, {
     }
 });
 
-// Categorías FIJAS
 const FIXED_CATEGORIES = [
     'NOMBRE',
     'APELLIDO',
@@ -61,7 +60,8 @@ io.on('connection', (socket) => {
             timeLeft: 60,
             host: socket.id,
             gameStarted: false,
-            roundNumber: 0
+            roundNumber: 0,
+            waitingForNextRound: false
         };
 
         const game = games[gameId];
@@ -143,6 +143,7 @@ io.on('connection', (socket) => {
         game.gameStarted = true;
         game.roundNumber = 0;
         game.players.forEach(p => p.score = 0);
+        game.waitingForNextRound = false;
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -166,6 +167,7 @@ io.on('connection', (socket) => {
         game.answers = {};
         game.stopPlayer = null;
         game.timeLeft = game.timeLimit || 60;
+        game.waitingForNextRound = false;
 
         const availableLetters = LETTERS.split('');
         game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
@@ -266,6 +268,84 @@ io.on('connection', (socket) => {
         }, 1500);
     });
 
+    // --- NUEVO: Anfitrión solicita siguiente ronda ---
+    socket.on('nextRound', (data) => {
+        const { gameId } = data;
+        const game = games[gameId];
+        if (!game) return;
+
+        const player = game.players.find(p => p.id === socket.id);
+        if (!player || !player.isHost) {
+            socket.emit('error', 'Solo el anfitrión puede avanzar');
+            return;
+        }
+
+        if (game.phase !== 'results') {
+            socket.emit('error', 'No hay resultados para avanzar');
+            return;
+        }
+
+        game.waitingForNextRound = false;
+        
+        if (game.roundNumber >= game.maxRounds) {
+            // Finalizar partida
+            finishGame(gameId);
+        } else {
+            // Iniciar siguiente ronda
+            io.to(gameId).emit('chatMessage', {
+                player: 'Sistema',
+                message: `⏳ Preparando siguiente ronda...`,
+                system: true
+            });
+            setTimeout(() => {
+                startRound(gameId);
+            }, 1500);
+        }
+    });
+
+    // --- NUEVO: Anfitrión finaliza la partida ---
+    socket.on('finishGame', (data) => {
+        const { gameId } = data;
+        const game = games[gameId];
+        if (!game) return;
+
+        const player = game.players.find(p => p.id === socket.id);
+        if (!player || !player.isHost) {
+            socket.emit('error', 'Solo el anfitrión puede finalizar');
+            return;
+        }
+
+        finishGame(gameId);
+    });
+
+    function finishGame(gameId) {
+        const game = games[gameId];
+        if (!game) return;
+
+        clearInterval(game.timer);
+        game.phase = 'finished';
+        game.gameStarted = false;
+        game.roundActive = false;
+
+        const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
+        
+        io.to(gameId).emit('gameFinished', {
+            winner: winner,
+            players: game.players.map(p => ({
+                name: p.name,
+                score: p.score
+            }))
+        });
+        
+        io.to(gameId).emit('chatMessage', {
+            player: 'Sistema',
+            message: `🏆 ¡${winner.name} ha ganado la partida con ${winner.score} puntos!`,
+            system: true
+        });
+        
+        io.to(gameId).emit('gameState', getGameState(gameId));
+    }
+
     function checkAllAnswered(game) {
         const categories = game.categories;
         const activePlayers = game.players.filter(p => p.connected);
@@ -306,7 +386,9 @@ io.on('connection', (socket) => {
             letter: game.currentLetter,
             categories: game.categories,
             stopPlayer: game.stopPlayer,
-            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie'
+            stopPlayerName: game.players.find(p => p.id === game.stopPlayer)?.name || 'Nadie',
+            roundNumber: game.roundNumber,
+            maxRounds: game.maxRounds
         });
 
         io.to(gameId).emit('chatMessage', {
@@ -315,36 +397,7 @@ io.on('connection', (socket) => {
             system: true
         });
 
-        if (game.roundNumber >= game.maxRounds) {
-            const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
-            io.to(gameId).emit('gameFinished', {
-                winner: winner,
-                players: game.players.map(p => ({
-                    name: p.name,
-                    score: p.score
-                }))
-            });
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: `🏆 ¡${winner.name} ha ganado la partida con ${winner.score} puntos!`,
-                system: true
-            });
-            game.gameStarted = false;
-            game.phase = 'waiting';
-        } else {
-            setTimeout(() => {
-                game.phase = 'playing';
-                io.to(gameId).emit('gameState', getGameState(gameId));
-                io.to(gameId).emit('chatMessage', {
-                    player: 'Sistema',
-                    message: `⏳ Preparando siguiente ronda...`,
-                    system: true
-                });
-                setTimeout(() => {
-                    startRound(gameId);
-                }, 3000);
-            }, 5000);
-        }
+        io.to(gameId).emit('gameState', getGameState(gameId));
     }
 
     function calculateRoundResults(game) {
@@ -448,6 +501,7 @@ io.on('connection', (socket) => {
         game.answers = {};
         game.stopPlayer = null;
         game.roundActive = false;
+        game.waitingForNextRound = false;
         clearInterval(game.timer);
 
         io.to(gameId).emit('gameState', getGameState(gameId));
@@ -571,7 +625,8 @@ io.on('connection', (socket) => {
             timeLeft: game.timeLeft,
             timeLimit: game.timeLimit,
             stopPlayer: game.stopPlayer,
-            totalPlayers: game.players.length
+            totalPlayers: game.players.length,
+            waitingForNextRound: game.waitingForNextRound
         };
     }
 
