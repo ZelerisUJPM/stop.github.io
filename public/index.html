@@ -974,42 +974,34 @@
                 showVoteResult(data);
             });
 
-            socket.on('allVotesResolved', () => {
-                votingActive = false;
-                votingArea.classList.add('hidden');
-                updateStatus('✅ Votaciones completadas', 'connected');
-                addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
-            });
+            // ---------- EN LA CONFIGURACIÓN DE SOCKET ----------
+socket.on('allVotesResolved', () => {
+    votingActive = false;
+    votingArea.classList.add('hidden');
+    updateStatus('✅ Votaciones completadas', 'connected');
+    addChatMessage('Sistema', '✅ Todas las votaciones han sido resueltas', true);
+    // El servidor ahora emite roundResults automáticamente después de las votaciones
+});
 
-            socket.on('roundResults', (data) => {
-                roundActive = false;
-                votingActive = false;
-                votingArea.classList.add('hidden');
-                renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
-                updateStatus('📊 Ronda finalizada', 'waiting');
-                stopBtn.disabled = true;
-                if (data.stopPlayerName) {
-                    addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
-                }
-                if (data.roundNumber >= data.maxRounds) {
-                    addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
-                }
-            });
-
-            socket.on('gameFinished', (data) => {
-                updateStatus(`🏆 ${data.winner.name} ha ganado la partida!`, 'connected');
-                showWinnerConfetti(data.winner.name);
-                
-                let msg = `🏆 ¡${data.winner.name} GANA con ${data.winner.score} puntos!\n\n`;
-                data.players.forEach(p => {
-                    msg += `${p.name}: ${p.score} pts\n`;
-                });
-                setTimeout(() => {
-                    alert(msg);
-                }, 800);
-                
-                hostControls.classList.add('hidden');
-            });
+// También asegúrate de que roundResults maneje correctamente la visualización:
+socket.on('roundResults', (data) => {
+    roundActive = false;
+    votingActive = false;
+    votingArea.classList.add('hidden');
+    renderResults(data.results, data.letter, data.categories, data.roundNumber, data.maxRounds);
+    updateStatus('📊 Ronda finalizada', 'waiting');
+    stopBtn.disabled = true;
+    if (data.stopPlayerName) {
+        addChatMessage('Sistema', `🛑 ${data.stopPlayerName} dijo STOP`, true);
+    }
+    if (data.roundNumber >= data.maxRounds) {
+        addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
+    }
+    // Mostrar botones de anfitrión si es host
+    if (isHost) {
+        hostControls.classList.remove('hidden');
+    }
+});
 
             socket.on('gameReset', () => {
                 updateStatus('🔄 Partida reiniciada', 'waiting');
