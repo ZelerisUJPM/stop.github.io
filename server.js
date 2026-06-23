@@ -3,6 +3,9 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const OpenAI = require('openai');
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Importar datos desde archivo separado
 const {
@@ -43,38 +46,34 @@ const FIXED_CATEGORIES = [
 ];
 
 // =====================================================
-// VALIDACIÓN CON DATAMUSE (para NOMBRE, APELLIDO, COSA, PAÍS/CIUDAD)
+// VALIDACIÓN CON OPENAI
 // =====================================================
 
-async function validateWordWithDatamuse(word) {
+async function validateWordWithAI(word, category, letter) {
     if (!word || word.length < 2) {
         return { valid: false, reason: 'Palabra demasiado corta' };
     }
 
     try {
-        const response = await fetch(
-            `https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=3`
-        );
-        const data = await response.json();
-        
-        if (data && data.length > 0) {
-            const exactMatch = data.some(item => 
-                item.word && item.word.toUpperCase() === word.toUpperCase()
-            );
-            if (exactMatch) {
-                return { valid: true, reason: 'Palabra encontrada en Datamuse' };
-            }
-        }
-        
-        // Si la palabra tiene 4+ letras, permitirla (puede ser un nombre propio)
-        if (word.length >= 4) {
-            return { valid: true, reason: 'Palabra aceptada (4+ letras)' };
-        }
-        
-        return { valid: false, reason: 'Palabra no encontrada en diccionario' };
+        const response = await openai.chat.completions.create({
+            model: "gpt-4.1-mini",
+            temperature: 0,
+            messages: [{
+                role: "user",
+                content: `Valida para STOP. Palabra: ${word}. Categoría: ${category}. Letra: ${letter}. Responde SOLO JSON: {"valid":true,"reason":"..."}`
+            }]
+        });
+
+        const content = response.choices?.[0]?.message?.content || '{"valid":true}';
+        const result = JSON.parse(content);
+
+        return {
+            valid: result.valid === true,
+            reason: result.reason || 'Validado por IA'
+        };
     } catch (error) {
-        console.error('Error en Datamuse:', error);
-        return { valid: true, reason: 'Error en validación, se acepta' };
+        console.error('Error OpenAI:', error);
+        return { valid: true, reason: 'Error IA, se acepta' };
     }
 }
 
@@ -789,14 +788,14 @@ io.on('connection', (socket) => {
                 const validation = validateWordLocal(answer, cat, game.currentLetter);
                 if (validation.valid) {
                     // Si pasa la validación local básica, verificar con Datamuse
-                    const datamuseResult = await validateWordWithDatamuse(answer);
+                    const datamuseResult = await validateWordWithAI(answer, cat, game.currentLetter);
                     results[`${player.id}_${cat}`] = {
                         playerId: player.id,
                         category: cat,
                         word: answer,
-                        valid: datamuseResult.valid,
-                        needsVote: !datamuseResult.valid && answer.length >= 4,
-                        reason: datamuseResult.reason || ''
+                        valid: aiResult.valid,
+                        needsVote: !aiResult.valid && answer.length >= 4,
+                        reason: aiResult.reason || ''
                     };
                 } else {
                     results[`${player.id}_${cat}`] = {
