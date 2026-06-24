@@ -123,7 +123,8 @@ io.on('connection', (socket) => {
             resultsCalculated: false,
             waitingForVotes: false,
             votingStarted: false,
-            roundEnding: false
+            roundEnding: false,
+            voteResultsApplied: false
         };
 
         const game = games[gameId];
@@ -211,6 +212,7 @@ io.on('connection', (socket) => {
         game.waitingForVotes = false;
         game.votingStarted = false;
         game.roundEnding = false;
+        game.voteResultsApplied = false;
         
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
@@ -283,6 +285,7 @@ io.on('connection', (socket) => {
         game.waitingForVotes = false;
         game.votingStarted = false;
         game.roundEnding = false;
+        game.voteResultsApplied = false;
 
         game.players.forEach(p => {
             game.answers[p.id] = {
@@ -356,6 +359,7 @@ io.on('connection', (socket) => {
         game.waitingForVotes = false;
         game.votingStarted = false;
         game.roundEnding = false;
+        game.voteResultsApplied = false;
 
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
@@ -414,6 +418,7 @@ io.on('connection', (socket) => {
                 game.waitingForVotes = false;
                 game.votingStarted = false;
                 game.roundEnding = false;
+                game.voteResultsApplied = false;
 
                 game.players.forEach(p => {
                     game.answers[p.id] = {
@@ -526,11 +531,9 @@ io.on('connection', (socket) => {
         
         console.log(`🛑 STOP en sala ${gameId} por ${player.name}, ronda ${game.roundNumber}`);
         
-        // MARcar que la ronda está terminando para evitar múltiples llamadas
         game.roundEnding = true;
         
         setTimeout(() => {
-            // Resetear flag antes de llamar
             game.roundEnding = false;
             finalizarRonda(gameId);
         }, 1500);
@@ -613,6 +616,9 @@ io.on('connection', (socket) => {
             game.waitingForVotes = false;
             game.votingStarted = false;
             
+            // Aplicar resultados de la votación a las respuestas
+            aplicarResultadosVotacion(game);
+            
             io.to(gameId).emit('allVotesResolved', { success: true });
             io.to(gameId).emit('chatMessage', {
                 player: 'Sistema',
@@ -622,13 +628,40 @@ io.on('connection', (socket) => {
             
             console.log(`✅ Votaciones resueltas en sala ${gameId}`);
             
-            // Solo llamar a finalizarRonda si no está ya procesando
             if (!game.processing && !game.roundFinished) {
                 setTimeout(() => {
                     finalizarRonda(gameId);
                 }, 500);
             }
         }
+    }
+
+    // =====================================================
+    // APLICAR RESULTADOS DE VOTACIÓN
+    // =====================================================
+    function aplicarResultadosVotacion(game) {
+        console.log(`📌 Aplicando resultados de votación para ronda ${game.roundNumber}`);
+        const players = game.players.filter(p => p.connected);
+        
+        for (let player of players) {
+            const playerAnswers = game.answers[player.id];
+            if (!playerAnswers) continue;
+            
+            for (let cat of game.categories) {
+                const answer = playerAnswers.answers[cat] || '';
+                if (answer.length === 0) continue;
+                
+                // Verificar si esta palabra fue votada
+                const voteData = game.pendingVotes[answer];
+                if (voteData && voteData.resolved) {
+                    // La palabra fue votada, su validez es el resultado de la votación
+                    // No necesitamos modificar la respuesta, solo recordar que ya fue validada
+                    // La validación final usará este resultado
+                    console.log(`📌 Palabra "${answer}" en ${cat} fue ${voteData.approved ? 'APROBADA' : 'RECHAZADA'}`);
+                }
+            }
+        }
+        game.voteResultsApplied = true;
     }
 
     // =====================================================
@@ -643,31 +676,26 @@ io.on('connection', (socket) => {
 
         console.log(`📌 [1] finalizarRonda llamada para ronda ${game.roundNumber} en sala ${gameId}`);
 
-        // Si ya terminó, salir
         if (game.roundFinished || game.resultsCalculated) {
             console.log(`⚠️ Ronda ${game.roundNumber} ya terminó`);
             return;
         }
 
-        // Si ya está procesando, salir
         if (game.processing) {
             console.log(`⚠️ Ronda ${game.roundNumber} ya está siendo procesada`);
             return;
         }
 
-        // Si está esperando votos, no hacer nada
         if (game.waitingForVotes) {
             console.log(`⏳ Ronda ${game.roundNumber} está esperando votaciones`);
             return;
         }
 
-        // Si la votación ya comenzó, no hacer nada
         if (game.votingStarted) {
             console.log(`⏳ Ronda ${game.roundNumber} ya tiene una votación en curso`);
             return;
         }
 
-        // Marcar como procesando
         game.processing = true;
         console.log(`📌 [2] Marcado como processing=true`);
 
@@ -676,8 +704,19 @@ io.on('connection', (socket) => {
             const validationResults = validateAllAnswersLocal(game);
             console.log(`📌 [4] Validación completada: ${Object.keys(validationResults).length} respuestas`);
 
-            const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
-            console.log(`📌 [5] Palabras que necesitan votación: ${wordsToVote.length}`);
+            // Filtrar palabras que necesitan votación, PERO que no hayan sido ya votadas
+            const wordsToVote = Object.values(validationResults).filter(r => {
+                if (!r.needsVote || !r.word || r.word.length === 0) return false;
+                // Verificar si esta palabra ya fue votada
+                const voteData = game.pendingVotes[r.word];
+                if (voteData && voteData.resolved) {
+                    // Si ya fue votada, no la volvemos a poner en votación
+                    return false;
+                }
+                return true;
+            });
+            
+            console.log(`📌 [5] Palabras que necesitan votación (no votadas aún): ${wordsToVote.length}`);
 
             if (wordsToVote.length > 0) {
                 console.log(`📌 [6] Iniciando votación para ${wordsToVote.length} palabras`);
@@ -687,6 +726,7 @@ io.on('connection', (socket) => {
                 game.resultsCalculated = false;
                 game.waitingForVotes = true;
                 game.votingStarted = true;
+                game.voteResultsApplied = false;
                 
                 wordsToVote.forEach(item => {
                     game.pendingVotes[item.word] = {
@@ -713,7 +753,7 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            console.log(`📌 [8] No hay votaciones, calculando resultados...`);
+            console.log(`📌 [8] No hay votaciones pendientes, calculando resultados...`);
             game.resultsCalculated = true;
             game.roundFinished = true;
             game.phase = 'results';
@@ -819,6 +859,21 @@ io.on('connection', (socket) => {
                         word: answer,
                         valid: false,
                         needsVote: false
+                    };
+                    continue;
+                }
+                
+                // Verificar si esta palabra ya fue votada
+                const voteData = game.pendingVotes[answer];
+                if (voteData && voteData.resolved) {
+                    // Si ya fue votada, usar el resultado de la votación
+                    results[`${player.id}_${cat}`] = {
+                        playerId: player.id,
+                        category: cat,
+                        word: answer,
+                        valid: voteData.approved,
+                        needsVote: false,
+                        reason: voteData.approved ? 'Aprobada por votación' : 'Rechazada por votación'
                     };
                     continue;
                 }
@@ -981,6 +1036,7 @@ io.on('connection', (socket) => {
         game.waitingForVotes = false;
         game.votingStarted = false;
         game.roundEnding = false;
+        game.voteResultsApplied = false;
         
         console.log(`▶️ Anfitrión avanza a siguiente ronda en sala ${gameId}`);
         startRound(gameId);
@@ -1061,6 +1117,7 @@ io.on('connection', (socket) => {
         game.waitingForVotes = false;
         game.votingStarted = false;
         game.roundEnding = false;
+        game.voteResultsApplied = false;
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
             game.letterChoiceTimeout = null;
@@ -1197,7 +1254,8 @@ io.on('connection', (socket) => {
             resultsCalculated: game.resultsCalculated || false,
             waitingForVotes: game.waitingForVotes || false,
             votingStarted: game.votingStarted || false,
-            roundEnding: game.roundEnding || false
+            roundEnding: game.roundEnding || false,
+            voteResultsApplied: game.voteResultsApplied || false
         };
     }
 
