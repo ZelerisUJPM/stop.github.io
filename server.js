@@ -44,23 +44,8 @@ const FIXED_CATEGORIES = [
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 // =====================================================
-// VALIDACIONES
+// VALIDACIÓN LOCAL SIMPLIFICADA (sin Datamuse)
 // =====================================================
-
-async function validateWordWithDatamuse(word) {
-    if (!word || word.length < 2) return { valid: false, reason: 'Palabra demasiado corta' };
-    try {
-        const response = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&max=3`);
-        const data = await response.json();
-        if (data && data.length > 0) {
-            const exactMatch = data.some(item => item.word && item.word.toUpperCase() === word.toUpperCase());
-            if (exactMatch) return { valid: true, reason: 'Palabra encontrada en Datamuse' };
-        }
-        return { valid: false, reason: 'Palabra no encontrada en Datamuse' };
-    } catch (error) {
-        return { valid: false, reason: 'Error en Datamuse' };
-    }
-}
 
 function validateWordLocal(word, category, letter) {
     if (!word || word.length < 2) return { valid: false, reason: 'Palabra demasiado corta', needsVote: false };
@@ -102,7 +87,7 @@ function validateWordLocal(word, category, letter) {
 }
 
 // =====================================================
-// SERVIDOR
+// SERVIDOR - VERSIÓN SIMPLIFICADA
 // =====================================================
 
 const games = {};
@@ -137,12 +122,10 @@ io.on('connection', (socket) => {
             pendingVotes: {},
             usedLetters: [],
             alphabetComplete: false,
-            isProcessing: false,
             letterPickerIndex: 0,
             choosingLetter: false,
             letterChoiceTimeout: null,
-            votesProcessed: false,
-            resultsCalculated: false,
+            processing: false,
             roundFinished: false
         };
 
@@ -221,7 +204,7 @@ io.on('connection', (socket) => {
         game.players.forEach(p => p.score = 0);
         game.usedLetters = [];
         game.alphabetComplete = false;
-        game.isProcessing = false;
+        game.processing = false;
         game.letterPickerIndex = 0;
         game.choosingLetter = false;
         game.answers = {};
@@ -229,8 +212,6 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         game.currentLetter = '';
         game.pendingVotes = {};
-        game.votesProcessed = false;
-        game.resultsCalculated = false;
         game.roundFinished = false;
         
         if (game.letterChoiceTimeout) {
@@ -301,10 +282,8 @@ io.on('connection', (socket) => {
         game.timeLeft = game.timeLimit || 60;
         game.answers = {};
         game.stopPlayer = null;
-        game.isProcessing = false;
-        game.resultsCalculated = false;
+        game.processing = false;
         game.roundFinished = false;
-        game.votesProcessed = false;
 
         game.players.forEach(p => {
             game.answers[p.id] = {
@@ -340,7 +319,7 @@ io.on('connection', (socket) => {
             if (game.timeLeft <= 0) {
                 clearInterval(game.timer);
                 console.log(`⏰ Tiempo agotado en sala ${gameId}, ronda ${game.roundNumber}`);
-                handleRoundEnd(gameId);
+                finishRound(gameId);
             }
         }, 1000);
     });
@@ -377,10 +356,8 @@ io.on('connection', (socket) => {
         game.roundActive = false;
         game.answers = {};
         game.stopPlayer = null;
-        game.isProcessing = false;
-        game.resultsCalculated = false;
+        game.processing = false;
         game.roundFinished = false;
-        game.votesProcessed = false;
         game.pendingVotes = {};
 
         if (game.letterChoiceTimeout) {
@@ -434,8 +411,7 @@ io.on('connection', (socket) => {
                 game.timeLeft = game.timeLimit || 60;
                 game.answers = {};
                 game.stopPlayer = null;
-                game.isProcessing = false;
-                game.resultsCalculated = false;
+                game.processing = false;
                 game.roundFinished = false;
 
                 game.players.forEach(p => {
@@ -472,7 +448,7 @@ io.on('connection', (socket) => {
                     io.to(gameId).emit('timerUpdate', { timeLeft: game.timeLeft });
                     if (game.timeLeft <= 0) {
                         clearInterval(game.timer);
-                        handleRoundEnd(gameId);
+                        finishRound(gameId);
                     }
                 }, 1000);
             }
@@ -484,7 +460,7 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase !== 'playing' || !game.roundActive) return;
-        if (game.isProcessing) return;
+        if (game.processing) return;
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player) return;
@@ -498,7 +474,7 @@ io.on('connection', (socket) => {
         const allAnswered = checkAllAnswered(game);
         if (allAnswered) {
             clearInterval(game.timer);
-            handleRoundEnd(gameId);
+            finishRound(gameId);
         }
     });
 
@@ -510,7 +486,7 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase !== 'playing' || !game.roundActive) return;
-        if (game.isProcessing) return;
+        if (game.processing) return;
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player) return;
@@ -534,7 +510,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        game.isProcessing = true;
+        game.processing = true;
         playerAnswers.stopped = true;
         game.stopPlayer = player.id;
 
@@ -554,7 +530,7 @@ io.on('connection', (socket) => {
         console.log(`🛑 STOP en sala ${gameId} por ${player.name}, ronda ${game.roundNumber}`);
         
         setTimeout(() => {
-            handleRoundEnd(gameId);
+            finishRound(gameId);
         }, 1500);
     });
 
@@ -648,51 +624,46 @@ io.on('connection', (socket) => {
             console.log(`✅ Votaciones resueltas en sala ${gameId}`);
             
             setTimeout(() => {
-                handleRoundEnd(gameId);
+                finishRound(gameId);
             }, 1000);
         }
     }
 
     // =====================================================
-    // MANEJAR FINAL DE RONDA (CON LOGS DETALLADOS)
+    // FINALIZAR RONDA (SIMPLIFICADA)
     // =====================================================
-    async function handleRoundEnd(gameId) {
+    function finishRound(gameId) {
         const game = games[gameId];
         if (!game) {
             console.log(`❌ Sala ${gameId} no encontrada`);
             return;
         }
 
-        console.log(`📊 [1] handleRoundEnd iniciado para ronda ${game.roundNumber} en sala ${gameId}`);
-
-        if (game.roundFinished || game.resultsCalculated) {
-            console.log(`⚠️ [2] Ronda ${game.roundNumber} ya fue finalizada en sala ${gameId}`);
+        if (game.roundFinished) {
+            console.log(`⚠️ Ronda ${game.roundNumber} ya fue finalizada`);
             return;
         }
 
-        if (game.isProcessing) {
-            console.log(`⚠️ [3] Ya se está procesando la ronda ${game.roundNumber} en sala ${gameId}`);
+        if (game.processing) {
+            console.log(`⚠️ Ya se está procesando la ronda ${game.roundNumber}`);
             return;
         }
 
-        game.isProcessing = true;
-        console.log(`📊 [4] Procesando final de ronda ${game.roundNumber} en sala ${gameId}`);
+        game.processing = true;
+        console.log(`📊 Finalizando ronda ${game.roundNumber} en sala ${gameId}`);
 
         try {
-            // Validar respuestas
-            console.log(`📊 [5] Validando respuestas para ronda ${game.roundNumber}`);
-            const validationResults = await validateAllAnswers(game);
-            console.log(`📊 [6] Validación completada. Resultados: ${Object.keys(validationResults).length} respuestas`);
-
+            // Validar respuestas localmente
+            const validationResults = validateAllAnswersLocal(game);
+            
+            // Buscar palabras que necesitan votación
             const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
-            console.log(`📊 [7] Palabras que necesitan votación: ${wordsToVote.length}`);
             
             if (wordsToVote.length > 0) {
-                console.log(`📋 [8] Iniciando votación para ${wordsToVote.length} palabras en sala ${gameId}`);
+                console.log(`📋 Iniciando votación para ${wordsToVote.length} palabras en sala ${gameId}`);
                 game.pendingVotes = {};
                 game.votesProcessed = false;
-                game.resultsCalculated = false;
-                game.isProcessing = false;
+                game.processing = false;
                 
                 wordsToVote.forEach(item => {
                     game.pendingVotes[item.word] = {
@@ -715,22 +686,18 @@ io.on('connection', (socket) => {
                     message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas`,
                     system: true
                 });
-                console.log(`📊 [9] Votación iniciada, saliendo de handleRoundEnd`);
                 return;
             }
 
-            // No hay votaciones, calcular resultados directamente
-            console.log(`📊 [10] No hay votaciones, calculando resultados directamente`);
-            game.resultsCalculated = true;
+            // No hay votaciones, calcular resultados
             game.roundFinished = true;
             game.phase = 'results';
             game.roundActive = false;
-            game.isProcessing = false;
+            game.processing = false;
             clearInterval(game.timer);
 
             const results = calculateRoundResults(game, validationResults);
-            console.log(`📊 [11] Resultados calculados: ${results.length} jugadores`);
-
+            
             for (let result of results) {
                 const player = game.players.find(p => p.id === result.playerId);
                 if (player) {
@@ -739,7 +706,6 @@ io.on('connection', (socket) => {
                 }
             }
 
-            console.log(`📊 [12] Emitiendo roundResults para sala ${gameId}`);
             io.to(gameId).emit('roundResults', {
                 results: results,
                 letter: game.currentLetter,
@@ -758,22 +724,19 @@ io.on('connection', (socket) => {
             });
 
             io.to(gameId).emit('gameState', getGameState(gameId));
-            console.log(`✅ [13] Ronda ${game.roundNumber} finalizada en sala ${gameId}`);
+            console.log(`✅ Ronda ${game.roundNumber} finalizada en sala ${gameId}`);
 
         } catch (error) {
-            console.error(`❌ [ERROR] Error al finalizar ronda ${game.roundNumber} en sala ${gameId}:`, error);
-            game.isProcessing = false;
-            // En caso de error, intentar finalizar de todos modos
+            console.error(`❌ Error al finalizar ronda ${game.roundNumber}:`, error);
+            game.processing = false;
+            
+            // Intentar finalizar de emergencia
             try {
-                console.log(`📊 [14] Intentando finalizar ronda de emergencia...`);
-                game.resultsCalculated = true;
                 game.roundFinished = true;
                 game.phase = 'results';
                 game.roundActive = false;
-                game.isProcessing = false;
                 clearInterval(game.timer);
-
-                // Crear resultados vacíos
+                
                 const emptyResults = game.players.filter(p => p.connected).map(p => ({
                     playerId: p.id,
                     playerName: p.name,
@@ -796,29 +759,29 @@ io.on('connection', (socket) => {
 
                 io.to(gameId).emit('chatMessage', {
                     player: 'Sistema',
-                    message: `⚠️ Ronda ${game.roundNumber} finalizada con error.`,
+                    message: `⚠️ Ronda ${game.roundNumber} finalizada (modo de emergencia).`,
                     system: true
                 });
 
                 io.to(gameId).emit('gameState', getGameState(gameId));
-                console.log(`✅ [15] Ronda ${game.roundNumber} finalizada de emergencia`);
+                console.log(`✅ Ronda ${game.roundNumber} finalizada en modo de emergencia`);
             } catch (e2) {
                 console.error(`❌ Error en finalización de emergencia:`, e2);
             }
         }
     }
 
-    async function validateAllAnswers(game) {
-        console.log(`📊 validateAllAnswers: Iniciando para ${game.players.filter(p => p.connected).length} jugadores`);
+    // =====================================================
+    // VALIDACIÓN LOCAL SIMPLIFICADA
+    // =====================================================
+    function validateAllAnswersLocal(game) {
+        console.log(`📊 Validando respuestas para ronda ${game.roundNumber}`);
         const results = {};
         const players = game.players.filter(p => p.connected);
         
         for (let player of players) {
             const playerAnswers = game.answers[player.id];
-            if (!playerAnswers) {
-                console.log(`⚠️ No hay respuestas para ${player.name}`);
-                continue;
-            }
+            if (!playerAnswers) continue;
             for (let cat of game.categories) {
                 const answer = playerAnswers.answers[cat] || '';
                 if (answer.length === 0) {
@@ -832,89 +795,18 @@ io.on('connection', (socket) => {
                     continue;
                 }
                 
-                if (cat === 'COLOR' || cat === 'FRUTA' || cat === 'ANIMAL' || cat === 'COSA' || cat === 'PAÍS/CIUDAD') {
-                    const validation = validateWordLocal(answer, cat, game.currentLetter);
-                    results[`${player.id}_${cat}`] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: validation.valid,
-                        needsVote: validation.needsVote || false,
-                        reason: validation.reason || ''
-                    };
-                    continue;
-                }
-                
-                if (cat === 'NOMBRE' || cat === 'APELLIDO') {
-                    const validation = validateWordLocal(answer, cat, game.currentLetter);
-                    if (validation.valid) {
-                        const datamuseResult = await validateWordWithDatamuse(answer);
-                        results[`${player.id}_${cat}`] = {
-                            playerId: player.id,
-                            category: cat,
-                            word: answer,
-                            valid: datamuseResult.valid,
-                            needsVote: !datamuseResult.valid && answer.length >= 3,
-                            reason: datamuseResult.reason || ''
-                        };
-                    } else {
-                        results[`${player.id}_${cat}`] = {
-                            playerId: player.id,
-                            category: cat,
-                            word: answer,
-                            valid: false,
-                            needsVote: false,
-                            reason: validation.reason || ''
-                        };
-                    }
-                    continue;
-                }
+                const validation = validateWordLocal(answer, cat, game.currentLetter);
+                results[`${player.id}_${cat}`] = {
+                    playerId: player.id,
+                    category: cat,
+                    word: answer,
+                    valid: validation.valid,
+                    needsVote: validation.needsVote || false,
+                    reason: validation.reason || ''
+                };
             }
         }
-        console.log(`📊 validateAllAnswers: Completado. ${Object.keys(results).length} respuestas validadas`);
-        return results;
-    }
-
-    function applyVoteResults(game) {
-        const results = {};
-        const players = game.players.filter(p => p.connected);
-        for (let player of players) {
-            const playerAnswers = game.answers[player.id];
-            if (!playerAnswers) continue;
-            for (let cat of game.categories) {
-                const answer = playerAnswers.answers[cat] || '';
-                const key = `${player.id}_${cat}`;
-                const voteData = game.pendingVotes[answer];
-                if (voteData && voteData.resolved) {
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: voteData.approved,
-                        needsVote: false,
-                        voted: true,
-                        approved: voteData.approved
-                    };
-                } else if (answer.length > 0) {
-                    const validation = validateWordLocal(answer, cat, game.currentLetter);
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: validation.valid,
-                        needsVote: false
-                    };
-                } else {
-                    results[key] = {
-                        playerId: player.id,
-                        category: cat,
-                        word: answer,
-                        valid: false,
-                        needsVote: false
-                    };
-                }
-            }
-        }
+        console.log(`📊 Validación completada. ${Object.keys(results).length} respuestas`);
         return results;
     }
 
@@ -922,7 +814,7 @@ io.on('connection', (socket) => {
     // CALCULAR RESULTADOS
     // =====================================================
     function calculateRoundResults(game, validationResults) {
-        console.log(`📊 calculateRoundResults: Iniciando para ${game.players.filter(p => p.connected).length} jugadores`);
+        console.log(`📊 Calculando resultados para ronda ${game.roundNumber}`);
         const results = [];
         const players = game.players.filter(p => p.connected);
         const categories = game.categories;
@@ -1027,7 +919,7 @@ io.on('connection', (socket) => {
             });
         });
 
-        console.log(`📊 calculateRoundResults: Completado. ${results.length} resultados`);
+        console.log(`📊 Resultados calculados. ${results.length} jugadores`);
         return results;
     }
 
@@ -1051,10 +943,8 @@ io.on('connection', (socket) => {
             return;
         }
 
-        game.isProcessing = false;
-        game.resultsCalculated = false;
+        game.processing = false;
         game.roundFinished = false;
-        game.votesProcessed = false;
         game.pendingVotes = {};
         
         console.log(`▶️ Anfitrión avanza a siguiente ronda en sala ${gameId}`);
@@ -1083,7 +973,7 @@ io.on('connection', (socket) => {
         game.phase = 'finished';
         game.gameStarted = false;
         game.roundActive = false;
-        game.isProcessing = false;
+        game.processing = false;
 
         const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
         
@@ -1135,13 +1025,11 @@ io.on('connection', (socket) => {
         game.pendingVotes = {};
         game.usedLetters = [];
         game.alphabetComplete = false;
-        game.isProcessing = false;
+        game.processing = false;
         game.letterPickerIndex = 0;
         game.choosingLetter = false;
         game.currentLetter = '';
-        game.resultsCalculated = false;
         game.roundFinished = false;
-        game.votesProcessed = false;
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
             game.letterChoiceTimeout = null;
