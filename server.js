@@ -94,9 +94,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'Palabra no válida (trampa detectada)', needsVote: false };
     }
 
-    // =============================================
-    // COLOR → solo lista local (votación si no está)
-    // =============================================
     if (category === 'COLOR') {
         if (COLORES.includes(normalized)) {
             return { valid: true, reason: 'Color válido', needsVote: false };
@@ -104,9 +101,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'Color no encontrado en la lista', needsVote: true };
     }
 
-    // =============================================
-    // FRUTA → solo lista local (votación si no está)
-    // =============================================
     if (category === 'FRUTA') {
         if (FRUTAS.includes(normalized)) {
             return { valid: true, reason: 'Fruta válida', needsVote: false };
@@ -114,9 +108,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'Fruta no encontrada en la lista', needsVote: true };
     }
 
-    // =============================================
-    // ANIMAL → solo lista local (votación si no está)
-    // =============================================
     if (category === 'ANIMAL') {
         if (ANIMALES.includes(normalized)) {
             return { valid: true, reason: 'Animal válido', needsVote: false };
@@ -124,9 +115,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'Animal no encontrado en la lista', needsVote: true };
     }
 
-    // =============================================
-    // COSA → solo lista local (votación si no está)
-    // =============================================
     if (category === 'COSA') {
         if (COSAS.includes(normalized)) {
             return { valid: true, reason: 'Cosa válida', needsVote: false };
@@ -137,9 +125,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'Cosa no válida', needsVote: false };
     }
 
-    // =============================================
-    // PAÍS/CIUDAD → solo lista local (votación si no está)
-    // =============================================
     if (category === 'PAÍS/CIUDAD') {
         if (LUGARES.includes(normalized)) {
             return { valid: true, reason: 'País/Ciudad válido', needsVote: false };
@@ -150,9 +135,6 @@ function validateWordLocal(word, category, letter) {
         return { valid: false, reason: 'País/Ciudad no válido', needsVote: false };
     }
 
-    // =============================================
-    // NOMBRE y APELLIDO → validación local básica + Datamuse después
-    // =============================================
     if (category === 'NOMBRE') {
         if (NOMBRES.includes(normalized) || normalized.length >= 3) {
             return { valid: true, reason: 'Nombre aceptado (validación local)', needsVote: false };
@@ -193,7 +175,7 @@ io.on('connection', (socket) => {
             categories: [...FIXED_CATEGORIES],
             currentLetter: '',
             round: 0,
-            maxRounds: 26, // Máximo 26 rondas (una por letra)
+            maxRounds: 26,
             phase: 'waiting',
             answers: {},
             stopPlayer: null,
@@ -217,11 +199,9 @@ io.on('connection', (socket) => {
             choosingLetter: false,
             chosenLetter: null,
             letterChoiceTimeout: null,
-            // =============================================
-            // NUEVO: Letras ya usadas
-            // =============================================
             usedLetters: [],
-            alphabetComplete: false
+            alphabetComplete: false,
+            roundEnding: false
         };
 
         const game = games[gameId];
@@ -317,7 +297,7 @@ io.on('connection', (socket) => {
         game.chosenLetter = null;
         game.usedLetters = [];
         game.alphabetComplete = false;
-        game.maxRounds = 26;
+        game.roundEnding = false;
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -369,9 +349,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // =============================================
-        // VERIFICAR QUE LA LETRA NO HAYA SIDO USADA
-        // =============================================
         if (game.usedLetters.includes(cleanLetter)) {
             socket.emit('error', `❌ La letra ${cleanLetter} ya fue usada en una ronda anterior. Elige otra.`);
             return;
@@ -382,7 +359,6 @@ io.on('connection', (socket) => {
             game.letterChoiceTimeout = null;
         }
 
-        // Agregar la letra a las usadas
         game.usedLetters.push(cleanLetter);
 
         game.currentLetter = cleanLetter;
@@ -393,6 +369,7 @@ io.on('connection', (socket) => {
         game.timeLeft = game.timeLimit || 60;
         game.answers = {};
         game.stopPlayer = null;
+        game.roundEnding = false;
 
         game.players.forEach(p => {
             game.answers[p.id] = {
@@ -403,7 +380,6 @@ io.on('connection', (socket) => {
             };
         });
 
-        // Avanzar el índice para la próxima ronda
         game.letterPickerIndex = (game.letterPickerIndex + 1) % activePlayers.length;
 
         io.to(gameId).emit('letterChosen', {
@@ -435,6 +411,7 @@ io.on('connection', (socket) => {
             
             if (game.timeLeft <= 0) {
                 clearInterval(game.timer);
+                console.log(`⏰ Tiempo agotado en sala ${gameId}, finalizando ronda ${game.roundNumber}`);
                 finishRound(gameId);
             }
         }, 1000);
@@ -446,8 +423,9 @@ io.on('connection', (socket) => {
     function startRound(gameId) {
         const game = games[gameId];
         if (!game) return;
+        
+        console.log(`🔄 Iniciando ronda ${game.roundNumber + 1} en sala ${gameId}`);
 
-        // Verificar si el abecedario está completo
         if (game.usedLetters.length >= 26) {
             game.alphabetComplete = true;
             game.phase = 'finished';
@@ -455,13 +433,6 @@ io.on('connection', (socket) => {
             io.to(gameId).emit('alphabetComplete', {
                 message: '🎉 ¡Se han completado todas las letras del abecedario!'
             });
-            io.to(gameId).emit('chatMessage', {
-                player: 'Sistema',
-                message: '🎉 ¡Se han completado todas las letras del abecedario! Partida finalizada.',
-                system: true
-            });
-            
-            // Mostrar ganador
             const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
             io.to(gameId).emit('gameFinished', {
                 winner: winner,
@@ -483,6 +454,7 @@ io.on('connection', (socket) => {
         game.answers = {};
         game.stopPlayer = null;
         game.timeLeft = game.timeLimit || 60;
+        game.roundEnding = false;
 
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
@@ -497,7 +469,6 @@ io.on('connection', (socket) => {
         }
         const currentPicker = activePlayers[game.letterPickerIndex];
 
-        // Buscar letras disponibles
         const availableLetters = LETTERS.split('').filter(l => !game.usedLetters.includes(l));
 
         console.log(`🎯 Ronda ${game.roundNumber}: ${currentPicker.name} debe elegir letra. Disponibles: ${availableLetters.join(', ')}`);
@@ -511,12 +482,6 @@ io.on('connection', (socket) => {
             message: `🎯 ${currentPicker.name}, elige una letra disponible para la ronda ${game.roundNumber}`
         });
 
-        io.to(gameId).emit('chatMessage', {
-            player: 'Sistema',
-            message: `🎯 ${currentPicker.name}, elige una letra disponible para la ronda ${game.roundNumber} (${availableLetters.length} letras restantes)`,
-            system: true
-        });
-
         io.to(gameId).emit('gameState', getGameState(gameId));
 
         game.letterChoiceTimeout = setTimeout(() => {
@@ -525,7 +490,6 @@ io.on('connection', (socket) => {
                 
                 const available = LETTERS.split('').filter(l => !game.usedLetters.includes(l));
                 if (available.length === 0) {
-                    // No hay letras disponibles, finalizar
                     game.alphabetComplete = true;
                     game.phase = 'finished';
                     game.gameStarted = false;
@@ -555,6 +519,7 @@ io.on('connection', (socket) => {
                 game.timeLeft = game.timeLimit || 60;
                 game.answers = {};
                 game.stopPlayer = null;
+                game.roundEnding = false;
 
                 game.players.forEach(p => {
                     game.answers[p.id] = {
@@ -575,12 +540,6 @@ io.on('connection', (socket) => {
                     usedLetters: game.usedLetters
                 });
 
-                io.to(gameId).emit('chatMessage', {
-                    player: 'Sistema',
-                    message: `⏰ Tiempo agotado. Letra asignada automáticamente: ${randomLetter}`,
-                    system: true
-                });
-
                 io.to(gameId).emit('roundStarted', {
                     round: game.roundNumber,
                     letter: randomLetter,
@@ -597,6 +556,7 @@ io.on('connection', (socket) => {
                     
                     if (game.timeLeft <= 0) {
                         clearInterval(game.timer);
+                        console.log(`⏰ Tiempo agotado en sala ${gameId}, finalizando ronda ${game.roundNumber}`);
                         finishRound(gameId);
                     }
                 }, 1000);
@@ -622,12 +582,13 @@ io.on('connection', (socket) => {
         const allAnswered = checkAllAnswered(game);
         if (allAnswered) {
             clearInterval(game.timer);
+            console.log(`✅ Todos los jugadores respondieron en sala ${gameId}, finalizando ronda ${game.roundNumber}`);
             finishRound(gameId);
         }
     });
 
     // =====================================================
-    // STOP: todas las casillas llenas
+    // STOP
     // =====================================================
     socket.on('sayStop', (data) => {
         const { gameId } = data;
@@ -674,13 +635,14 @@ io.on('connection', (socket) => {
 
         clearInterval(game.timer);
         
+        console.log(`🛑 STOP dicho en sala ${gameId} por ${player.name}, finalizando ronda ${game.roundNumber}`);
         setTimeout(() => {
             finishRound(gameId);
         }, 1500);
     });
 
     // =====================================================
-    // VOTACIÓN (jugador por jugador)
+    // VOTACIÓN
     // =====================================================
 
     socket.on('voteWord', (data) => {
@@ -769,6 +731,7 @@ io.on('connection', (socket) => {
                 system: true
             });
             
+            console.log(`✅ Votaciones resueltas en sala ${gameId}, calculando resultados`);
             setTimeout(() => {
                 forceFinishRound(gameId);
             }, 1000);
@@ -779,6 +742,10 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.resultsCalculated) return;
+        if (game.roundEnding) return;
+        game.roundEnding = true;
+
+        console.log(`📊 Forzando finalización de ronda ${game.roundNumber} en sala ${gameId}`);
 
         game.resultsCalculated = true;
         game.roundFinished = true;
@@ -816,6 +783,9 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
+        
+        console.log(`✅ Ronda ${game.roundNumber} finalizada en sala ${gameId}`);
+        game.roundEnding = false;
     }
 
     // =====================================================
@@ -839,8 +809,7 @@ io.on('connection', (socket) => {
         }
 
         game.waitingForNextRound = false;
-        
-        // Verificar si el anfitrión quiere finalizar o si el abecedario está completo
+        console.log(`▶️ Anfitrión avanza a siguiente ronda en sala ${gameId}`);
         startRound(gameId);
     });
 
@@ -855,6 +824,7 @@ io.on('connection', (socket) => {
             return;
         }
 
+        console.log(`🏁 Anfitrión finaliza partida en sala ${gameId}`);
         finishGame(gameId);
     });
 
@@ -909,6 +879,10 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase === 'results' || game.roundFinished) return;
+        if (game.roundEnding) return;
+        game.roundEnding = true;
+
+        console.log(`📊 Finalizando ronda ${game.roundNumber} en sala ${gameId}`);
 
         game.phase = 'results';
         game.roundActive = false;
@@ -920,6 +894,7 @@ io.on('connection', (socket) => {
         const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
         
         if (wordsToVote.length > 0) {
+            console.log(`📋 Iniciando votación para ${wordsToVote.length} palabras en sala ${gameId}`);
             game.pendingVotes = {};
             game.voteResolved = false;
             game.votesStarted = true;
@@ -950,9 +925,11 @@ io.on('connection', (socket) => {
                 system: true
             });
             
+            game.roundEnding = false;
             return;
         }
 
+        console.log(`📊 No hay votaciones en sala ${gameId}, calculando resultados directamente`);
         game.resultsCalculated = true;
         game.roundFinished = true;
         const results = calculateRoundResults(game, validationResults);
@@ -983,6 +960,8 @@ io.on('connection', (socket) => {
         });
 
         io.to(gameId).emit('gameState', getGameState(gameId));
+        console.log(`✅ Ronda ${game.roundNumber} finalizada en sala ${gameId}`);
+        game.roundEnding = false;
     }
 
     async function validateAllAnswers(game) {
@@ -1247,6 +1226,7 @@ io.on('connection', (socket) => {
         game.chosenLetter = null;
         game.usedLetters = [];
         game.alphabetComplete = false;
+        game.roundEnding = false;
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
             game.letterChoiceTimeout = null;
