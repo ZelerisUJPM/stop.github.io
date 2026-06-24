@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>STOP Online - Con Votación</title>
+    <title>STOP Online - Elige la Letra</title>
     <style>
         * {
             box-sizing: border-box;
@@ -30,6 +30,7 @@
             margin-bottom: 5px;
             letter-spacing: 3px;
         }
+        .title i { margin-right: 12px; }
         .subtitle {
             text-align: center;
             color: #94a3b8;
@@ -403,10 +404,80 @@
             0% { opacity: 1; transform: translateY(-20px) rotate(0deg); }
             100% { opacity: 0; transform: translateY(105vh) rotate(720deg); }
         }
+
+        /* ============================================= */
+        /* SELECTOR DE LETRAS */
+        /* ============================================= */
+        .letter-selector {
+            background: #0f172a;
+            border-radius: 24px;
+            padding: 20px;
+            margin: 15px 0;
+            border: 2px solid #facc15;
+            text-align: center;
+        }
+        .letter-selector.hidden {
+            display: none;
+        }
+        .letter-selector h3 {
+            color: #facc15;
+            margin-bottom: 5px;
+        }
+        .letter-selector .picker-message {
+            color: #94a3b8;
+            font-size: 1rem;
+            margin-bottom: 15px;
+        }
+        .letter-selector .picker-message .highlight {
+            color: #4ade80;
+            font-weight: bold;
+        }
+        .letter-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            max-width: 500px;
+            margin: 15px auto;
+        }
+        .letter-grid .letter-btn {
+            padding: 12px 0;
+            font-size: 1.3rem;
+            font-weight: bold;
+            border-radius: 12px;
+            border: 2px solid #334155;
+            background: #1e293b;
+            color: #e2e8f0;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .letter-grid .letter-btn:hover {
+            background: #facc15;
+            color: #0f172a;
+            border-color: #facc15;
+        }
+        .letter-grid .letter-btn:active {
+            transform: scale(0.92);
+        }
+        .letter-grid .letter-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .letter-grid .letter-btn.my-turn {
+            border-color: #4ade80;
+            box-shadow: 0 0 15px #4ade8033;
+        }
+        .letter-timer {
+            color: #f87171;
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
         @media (max-width: 600px) {
             .title { font-size: 1.5rem; }
             .letter-display { font-size: 3rem; }
             .host-controls .btn { min-width: 80px; font-size: 0.8rem; padding: 8px 12px; }
+            .letter-grid { gap: 5px; }
+            .letter-grid .letter-btn { padding: 10px 0; font-size: 1rem; }
         }
     </style>
 </head>
@@ -433,6 +504,20 @@
                     <label>Rondas: <input type="number" id="maxRoundsInput" value="5" min="1" max="20"></label>
                     <label>Tiempo: <input type="number" id="timeLimitInput" value="60" min="20" max="180"></label>
                     <button class="btn btn-secondary" id="applyConfigBtn">Aplicar</button>
+                </div>
+
+                <!-- ============================================= -->
+                <!-- SELECTOR DE LETRAS (aparece cuando toca elegir) -->
+                <!-- ============================================= -->
+                <div id="letterSelector" class="letter-selector hidden">
+                    <h3>🔤 Elige la letra</h3>
+                    <div class="picker-message" id="pickerMessage">
+                        Esperando instrucciones...
+                    </div>
+                    <div class="letter-grid" id="letterGrid">
+                        <!-- Generado por JS -->
+                    </div>
+                    <div class="letter-timer" id="letterTimer"></div>
                 </div>
 
                 <div class="letter-display">
@@ -544,6 +629,12 @@
         const applyConfigBtn = document.getElementById('applyConfigBtn');
         const confettiContainer = document.getElementById('confettiContainer');
 
+        // Selector de letras
+        const letterSelector = document.getElementById('letterSelector');
+        const letterGrid = document.getElementById('letterGrid');
+        const pickerMessage = document.getElementById('pickerMessage');
+        const letterTimer = document.getElementById('letterTimer');
+
         const CATEGORIES = ['NOMBRE', 'APELLIDO', 'COSA', 'COLOR', 'FRUTA', 'PAÍS/CIUDAD', 'ANIMAL'];
 
         // Estado
@@ -556,7 +647,84 @@
         let roundActive = false;
         let votingActive = false;
 
-        // Funciones UI
+        // =============================================
+        // CONSTRUIR SELECTOR DE LETRAS
+        // =============================================
+        function buildLetterSelector() {
+            letterGrid.innerHTML = '';
+            const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            for (let char of letters) {
+                const btn = document.createElement('button');
+                btn.className = 'letter-btn';
+                btn.textContent = char;
+                btn.dataset.letter = char;
+                btn.disabled = true;
+                btn.addEventListener('click', () => {
+                    const letter = btn.dataset.letter;
+                    if (socket && connected) {
+                        socket.emit('chooseLetter', { gameId, letter });
+                        // Deshabilitar todos los botones después de elegir
+                        document.querySelectorAll('.letter-btn').forEach(b => b.disabled = true);
+                        pickerMessage.textContent = '⏳ Letra enviada...';
+                    }
+                });
+                letterGrid.appendChild(btn);
+            }
+        }
+
+        // Mostrar selector de letras
+        function showLetterSelector(data) {
+            letterSelector.classList.remove('hidden');
+            pickerMessage.innerHTML = `🎯 <span class="highlight">${data.pickerName}</span>, elige la letra para la ronda ${data.round}`;
+            letterTimer.textContent = '⏱️ Tienes 30 segundos';
+
+            const isMyTurn = socket && data.pickerId === socket.id;
+
+            // Habilitar/deshabilitar botones
+            document.querySelectorAll('.letter-btn').forEach((btn, index) => {
+                btn.disabled = !isMyTurn;
+                if (isMyTurn) {
+                    btn.classList.add('my-turn');
+                } else {
+                    btn.classList.remove('my-turn');
+                }
+            });
+
+            if (isMyTurn) {
+                pickerMessage.innerHTML = `🎯 <span class="highlight">¡ES TU TURNO!</span> Elige la letra para la ronda ${data.round}`;
+            } else {
+                pickerMessage.innerHTML = `⏳ <span class="highlight">${data.pickerName}</span> está eligiendo la letra...`;
+            }
+
+            // Temporizador visual (30 segundos)
+            let timeLeft = 30;
+            letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
+            const timerInterval = setInterval(() => {
+                timeLeft--;
+                letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    letterTimer.textContent = '⏰ Tiempo agotado. Letra asignada automáticamente.';
+                }
+            }, 1000);
+
+            // Guardar el intervalo para limpiarlo después
+            window._letterTimerInterval = timerInterval;
+        }
+
+        // Ocultar selector de letras
+        function hideLetterSelector() {
+            letterSelector.classList.add('hidden');
+            if (window._letterTimerInterval) {
+                clearInterval(window._letterTimerInterval);
+                window._letterTimerInterval = null;
+            }
+            letterTimer.textContent = '';
+        }
+
+        // =============================================
+        // FUNCIONES UI
+        // =============================================
         function updateStatus(message, type) {
             const icons = { 'connected': '🟢', 'waiting': '🟡', 'error': '🔴', 'playing': '🎮', 'ready': '🎯' };
             statusBar.innerHTML = `${icons[type] || '📌'} ${message}`;
@@ -831,7 +999,9 @@
             }, 500);
         }
 
-        // Socket
+        // =============================================
+        // SOCKET
+        // =============================================
         function setupSocketListeners() {
             if (!socket) return;
 
@@ -843,6 +1013,7 @@
             socket.on('disconnect', () => {
                 updateStatus('Desconectado', 'error');
                 connected = false;
+                hideLetterSelector();
             });
 
             socket.on('gameCreated', () => {
@@ -851,6 +1022,10 @@
 
             socket.on('gameState', (state) => {
                 updateGameUI(state);
+                // Si la fase es 'choosing_letter', mostrar el selector
+                if (state.phase === 'choosing_letter' && state.choosingLetter) {
+                    // El evento chooseLetter se encarga de mostrar el selector
+                }
             });
 
             socket.on('playersUpdate', (players) => {
@@ -858,15 +1033,30 @@
                 playerCount.textContent = players.filter(p => p.connected).length;
             });
 
+            // =============================================
+            // EVENTOS PARA ELEGIR LETRA
+            // =============================================
+            socket.on('chooseLetter', (data) => {
+                showLetterSelector(data);
+            });
+
+            socket.on('letterChosen', (data) => {
+                hideLetterSelector();
+                addChatMessage('Sistema', `🔤 ${data.chosenBy} eligió la letra: ${data.letter}`, true);
+                currentLetter.textContent = data.letter;
+            });
+
             socket.on('roundStarted', (data) => {
                 roundActive = true;
                 votingActive = false;
+                hideLetterSelector();
                 votingArea.classList.add('hidden');
                 resultsContainer.classList.add('hidden');
                 hostControls.classList.add('hidden');
                 updateStatus(`🔤 Ronda ${data.round} - Letra: ${data.letter}`, 'playing');
                 renderAnswers(CATEGORIES, data.letter, true);
                 timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
+                currentLetter.textContent = data.letter;
             });
 
             socket.on('timerUpdate', (data) => {
@@ -928,6 +1118,7 @@
                 });
                 setTimeout(() => { alert(msg); }, 800);
                 hostControls.classList.add('hidden');
+                hideLetterSelector();
             });
 
             socket.on('gameReset', () => {
@@ -937,6 +1128,7 @@
                 votingArea.classList.add('hidden');
                 renderAnswers([], '', false);
                 confettiContainer.innerHTML = '';
+                hideLetterSelector();
             });
 
             socket.on('chatMessage', (data) => {
@@ -955,7 +1147,9 @@
             });
         }
 
-        // Acciones
+        // =============================================
+        // ACCIONES
+        // =============================================
         function createGame() {
             gameId = roomInput.value.trim().toUpperCase() || 'STOP';
             playerName = prompt('Ingresa tu nombre:', 'Anfitrión') || 'Anfitrión';
@@ -982,7 +1176,9 @@
             updateStatus(`🔗 Uniéndose a ${gameId}...`, 'waiting');
         }
 
-        // Eventos UI
+        // =============================================
+        // EVENTOS UI
+        // =============================================
         createBtn.addEventListener('click', createGame);
         joinBtn.addEventListener('click', joinGame);
 
@@ -1037,7 +1233,11 @@
             }
         });
 
-        // Inicialización
+        // =============================================
+        // INICIALIZACIÓN
+        // =============================================
+        buildLetterSelector();
+        hideLetterSelector();
         updateStatus('🔌 Conéctate al servidor', 'waiting');
         roomInput.value = 'STOP';
         renderAnswers([], '', false);
