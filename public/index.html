@@ -450,19 +450,26 @@
             cursor: pointer;
             transition: 0.15s;
         }
-        .letter-grid .letter-btn:hover {
+        .letter-grid .letter-btn.used {
+            opacity: 0.3;
+            cursor: not-allowed;
+            background: #334155;
+            border-color: #1e293b;
+            text-decoration: line-through;
+        }
+        .letter-grid .letter-btn:hover:not(.used):not(:disabled) {
             background: #facc15;
             color: #0f172a;
             border-color: #facc15;
         }
-        .letter-grid .letter-btn:active {
+        .letter-grid .letter-btn:active:not(.used):not(:disabled) {
             transform: scale(0.92);
         }
         .letter-grid .letter-btn:disabled {
             opacity: 0.3;
             cursor: not-allowed;
         }
-        .letter-grid .letter-btn.my-turn {
+        .letter-grid .letter-btn.my-turn:not(.used) {
             border-color: #4ade80;
             box-shadow: 0 0 15px #4ade8033;
         }
@@ -470,6 +477,33 @@
             color: #f87171;
             font-size: 0.9rem;
             margin-top: 10px;
+        }
+        .used-letters-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            justify-content: center;
+            margin: 10px 0;
+            padding: 8px;
+            background: #0f172a;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+        .used-letters-display .letter-used {
+            background: #334155;
+            color: #64748b;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .used-letters-display .letter-available {
+            background: #1e293b;
+            color: #4ade80;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: bold;
         }
 
         @media (max-width: 600px) {
@@ -501,7 +535,7 @@
         <div class="main-panel">
             <div id="gameArea" class="game-area">
                 <div id="configArea" class="config-area">
-                    <label>Rondas: <input type="number" id="maxRoundsInput" value="5" min="1" max="20"></label>
+                    <label>Rondas: <input type="number" id="maxRoundsInput" value="26" min="1" max="26"></label>
                     <label>Tiempo: <input type="number" id="timeLimitInput" value="60" min="20" max="180"></label>
                     <button class="btn btn-secondary" id="applyConfigBtn">Aplicar</button>
                 </div>
@@ -513,6 +547,9 @@
                     <h3>🔤 Elige la letra</h3>
                     <div class="picker-message" id="pickerMessage">
                         Esperando instrucciones...
+                    </div>
+                    <div class="used-letters-display" id="usedLettersDisplay">
+                        <!-- Generado por JS -->
                     </div>
                     <div class="letter-grid" id="letterGrid">
                         <!-- Generado por JS -->
@@ -634,6 +671,7 @@
         const letterGrid = document.getElementById('letterGrid');
         const pickerMessage = document.getElementById('pickerMessage');
         const letterTimer = document.getElementById('letterTimer');
+        const usedLettersDisplay = document.getElementById('usedLettersDisplay');
 
         const CATEGORIES = ['NOMBRE', 'APELLIDO', 'COSA', 'COLOR', 'FRUTA', 'PAÍS/CIUDAD', 'ANIMAL'];
 
@@ -674,41 +712,90 @@
             }
         }
 
+        // Actualizar estado de letras usadas en el selector
+        function updateUsedLetters(usedLetters) {
+            const allButtons = letterGrid.querySelectorAll('.letter-btn');
+            allButtons.forEach(btn => {
+                const letter = btn.dataset.letter;
+                if (usedLetters && usedLetters.includes(letter)) {
+                    btn.classList.add('used');
+                    btn.disabled = true;
+                } else {
+                    btn.classList.remove('used');
+                }
+            });
+            // Actualizar display de letras usadas
+            updateUsedLettersDisplay(usedLetters);
+        }
+
+        function updateUsedLettersDisplay(usedLetters) {
+            const allLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+            usedLettersDisplay.innerHTML = '';
+            allLetters.forEach(letter => {
+                const span = document.createElement('span');
+                span.textContent = letter;
+                if (usedLetters && usedLetters.includes(letter)) {
+                    span.className = 'letter-used';
+                } else {
+                    span.className = 'letter-available';
+                }
+                usedLettersDisplay.appendChild(span);
+            });
+        }
+
         // Mostrar selector de letras
         function showLetterSelector(data) {
             console.log('📩 Mostrando selector:', data);
             letterSelector.classList.remove('hidden');
-            pickerMessage.innerHTML = `🎯 <span class="highlight">${data.pickerName}</span>, elige la letra para la ronda ${data.round}`;
-            letterTimer.textContent = '⏱️ Tienes 30 segundos';
+            
+            const available = data.availableLetters || [];
+            const used = data.usedLetters || [];
+
+            pickerMessage.innerHTML = `🎯 <span class="highlight">${data.pickerName}</span>, elige una letra disponible para la ronda ${data.round}`;
+            letterTimer.textContent = `⏱️ Tienes 30 segundos · ${available.length} letras disponibles`;
 
             const isMyTurn = socket && data.pickerId === socket.id;
             isMyTurnToPick = isMyTurn;
 
-            // Habilitar/deshabilitar botones
-            document.querySelectorAll('.letter-btn').forEach((btn) => {
-                btn.disabled = !isMyTurn;
-                if (isMyTurn) {
+            // Actualizar botones
+            const allButtons = letterGrid.querySelectorAll('.letter-btn');
+            allButtons.forEach(btn => {
+                const letter = btn.dataset.letter;
+                const isUsed = used && used.includes(letter);
+                const isAvailable = available.includes(letter);
+                
+                btn.classList.remove('used', 'my-turn');
+                
+                if (isUsed) {
+                    btn.classList.add('used');
+                    btn.disabled = true;
+                } else if (isAvailable && isMyTurn) {
+                    btn.disabled = false;
                     btn.classList.add('my-turn');
+                } else if (isAvailable && !isMyTurn) {
+                    btn.disabled = true;
                 } else {
-                    btn.classList.remove('my-turn');
+                    btn.disabled = true;
                 }
             });
 
+            updateUsedLettersDisplay(used);
+
             if (isMyTurn) {
-                pickerMessage.innerHTML = `🎯 <span class="highlight">¡ES TU TURNO!</span> Elige la letra para la ronda ${data.round}`;
+                pickerMessage.innerHTML = `🎯 <span class="highlight">¡ES TU TURNO!</span> Elige una letra disponible para la ronda ${data.round}`;
             } else {
                 pickerMessage.innerHTML = `⏳ <span class="highlight">${data.pickerName}</span> está eligiendo la letra...`;
             }
 
             // Temporizador visual (30 segundos)
             let timeLeft = 30;
-            letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
+            letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s · ${available.length} letras disponibles`;
             if (window._letterTimerInterval) {
                 clearInterval(window._letterTimerInterval);
             }
             window._letterTimerInterval = setInterval(() => {
                 timeLeft--;
-                letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
+                letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s · ${available.length} letras disponibles`;
                 if (timeLeft <= 0) {
                     clearInterval(window._letterTimerInterval);
                     window._letterTimerInterval = null;
@@ -952,7 +1039,7 @@
             }
             if (isHost && !state.gameStarted && state.phase !== 'finished') {
                 document.getElementById('configArea').style.display = 'flex';
-                maxRoundsInput.value = state.maxRounds || 5;
+                maxRoundsInput.value = state.maxRounds || 26;
                 timeLimitInput.value = state.timeLimit || 60;
             } else {
                 document.getElementById('configArea').style.display = 'none';
@@ -1028,6 +1115,10 @@
 
             socket.on('gameState', (state) => {
                 updateGameUI(state);
+                // Actualizar letras usadas si están disponibles
+                if (state.usedLetters) {
+                    updateUsedLetters(state.usedLetters);
+                }
             });
 
             socket.on('playersUpdate', (players) => {
@@ -1046,6 +1137,9 @@
             socket.on('letterChosen', (data) => {
                 console.log('📩 Evento letterChosen recibido:', data);
                 hideLetterSelector();
+                if (data.usedLetters) {
+                    updateUsedLetters(data.usedLetters);
+                }
                 addChatMessage('Sistema', `🔤 ${data.chosenBy} eligió la letra: ${data.letter}`, true);
                 currentLetter.textContent = data.letter;
             });
@@ -1061,6 +1155,9 @@
                 renderAnswers(CATEGORIES, data.letter, true);
                 timerDisplay.textContent = `⏱️ ${data.timeLimit}s`;
                 currentLetter.textContent = data.letter;
+                if (data.usedLetters) {
+                    updateUsedLetters(data.usedLetters);
+                }
             });
 
             socket.on('timerUpdate', (data) => {
@@ -1108,9 +1205,18 @@
                 if (data.roundNumber >= data.maxRounds) {
                     addChatMessage('Sistema', `⏳ Última ronda completada. El anfitrión puede finalizar la partida.`, true);
                 }
+                if (data.usedLetters) {
+                    updateUsedLetters(data.usedLetters);
+                }
                 if (isHost) {
                     hostControls.classList.remove('hidden');
                 }
+            });
+
+            socket.on('alphabetComplete', (data) => {
+                updateStatus('🎉 ¡Abecedario completo!', 'connected');
+                addChatMessage('Sistema', data.message, true);
+                // El servidor también emite gameFinished
             });
 
             socket.on('gameFinished', (data) => {
@@ -1133,6 +1239,7 @@
                 renderAnswers([], '', false);
                 confettiContainer.innerHTML = '';
                 hideLetterSelector();
+                updateUsedLetters([]);
             });
 
             socket.on('chatMessage', (data) => {
@@ -1217,7 +1324,7 @@
 
         applyConfigBtn.addEventListener('click', () => {
             if (socket && connected && isHost) {
-                const maxRounds = parseInt(maxRoundsInput.value) || 5;
+                const maxRounds = parseInt(maxRoundsInput.value) || 26;
                 const timeLimit = parseInt(timeLimitInput.value) || 60;
                 socket.emit('configGame', { gameId, maxRounds, timeLimit });
             }
@@ -1242,14 +1349,16 @@
         // =============================================
         buildLetterSelector();
         hideLetterSelector();
+        updateUsedLetters([]);
         updateStatus('🔌 Conéctate al servidor', 'waiting');
         roomInput.value = 'STOP';
         renderAnswers([], '', false);
         renderPlayers([]);
         hostControls.classList.add('hidden');
         votingArea.classList.add('hidden');
+        maxRoundsInput.value = 26;
+        timeLimitInput.value = 60;
 
-        // Log para depuración
         console.log('🔄 STOP Online iniciado correctamente');
     })();
 </script>
