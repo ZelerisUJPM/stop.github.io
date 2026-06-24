@@ -469,7 +469,6 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase !== 'playing' || !game.roundActive) return;
-        if (game.processing) return;
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player) return;
@@ -493,7 +492,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        game.processing = true;
+        // NO establecer processing = true aquí
         playerAnswers.stopped = true;
         game.stopPlayer = player.id;
 
@@ -619,30 +618,27 @@ io.on('connection', (socket) => {
         }
 
         console.log(`📌 [1] finalizarRonda llamada para ronda ${game.roundNumber} en sala ${gameId}`);
-        console.log(`📌 [2] Estado: processing=${game.processing}, roundFinished=${game.roundFinished}, resultsCalculated=${game.resultsCalculated}`);
 
         // Si ya está procesando o ya terminó, salir
         if (game.processing || game.roundFinished || game.resultsCalculated) {
-            console.log(`⚠️ Ronda ${game.roundNumber} ya está procesada o terminada`);
+            console.log(`⚠️ Ronda ${game.roundNumber} ya está procesada o terminada (processing=${game.processing}, roundFinished=${game.roundFinished}, resultsCalculated=${game.resultsCalculated})`);
             return;
         }
 
         // Marcar como procesando
         game.processing = true;
-        console.log(`📌 [3] Marcado como processing=true`);
+        console.log(`📌 [2] Marcado como processing=true`);
 
         try {
-            // 1. Validar respuestas localmente
-            console.log(`📌 [4] Validando respuestas...`);
+            console.log(`📌 [3] Validando respuestas...`);
             const validationResults = validateAllAnswersLocal(game);
-            console.log(`📌 [5] Validación completada: ${Object.keys(validationResults).length} respuestas`);
+            console.log(`📌 [4] Validación completada: ${Object.keys(validationResults).length} respuestas`);
 
-            // 2. Buscar palabras que necesitan votación
             const wordsToVote = Object.values(validationResults).filter(r => r.needsVote && r.word && r.word.length > 0);
-            console.log(`📌 [6] Palabras que necesitan votación: ${wordsToVote.length}`);
+            console.log(`📌 [5] Palabras que necesitan votación: ${wordsToVote.length}`);
 
             if (wordsToVote.length > 0) {
-                console.log(`📌 [7] Iniciando votación para ${wordsToVote.length} palabras`);
+                console.log(`📌 [6] Iniciando votación para ${wordsToVote.length} palabras`);
                 game.pendingVotes = {};
                 game.votesProcessed = false;
                 game.processing = false;
@@ -669,12 +665,11 @@ io.on('connection', (socket) => {
                     message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas`,
                     system: true
                 });
-                console.log(`📌 [8] Votación iniciada, saliendo`);
+                console.log(`📌 [7] Votación iniciada, saliendo`);
                 return;
             }
 
-            // 3. No hay votaciones, calcular resultados
-            console.log(`📌 [9] No hay votaciones, calculando resultados...`);
+            console.log(`📌 [8] No hay votaciones, calculando resultados...`);
             game.resultsCalculated = true;
             game.roundFinished = true;
             game.phase = 'results';
@@ -683,7 +678,7 @@ io.on('connection', (socket) => {
             clearInterval(game.timer);
 
             const results = calculateRoundResults(game, validationResults);
-            console.log(`📌 [10] Resultados calculados: ${results.length} jugadores`);
+            console.log(`📌 [9] Resultados calculados: ${results.length} jugadores`);
 
             for (let result of results) {
                 const player = game.players.find(p => p.id === result.playerId);
@@ -693,7 +688,7 @@ io.on('connection', (socket) => {
                 }
             }
 
-            console.log(`📌 [11] Emitiendo roundResults...`);
+            console.log(`📌 [10] Emitiendo roundResults...`);
             io.to(gameId).emit('roundResults', {
                 results: results,
                 letter: game.currentLetter,
@@ -712,15 +707,14 @@ io.on('connection', (socket) => {
             });
 
             io.to(gameId).emit('gameState', getGameState(gameId));
-            console.log(`✅ [12] Ronda ${game.roundNumber} finalizada con éxito en sala ${gameId}`);
+            console.log(`✅ [11] Ronda ${game.roundNumber} finalizada con éxito en sala ${gameId}`);
 
         } catch (error) {
             console.error(`❌ Error en finalizarRonda:`, error);
             game.processing = false;
             
-            // Intentar finalización de emergencia
             try {
-                console.log(`📌 [13] Intentando finalización de emergencia...`);
+                console.log(`📌 [12] Intentando finalización de emergencia...`);
                 game.resultsCalculated = true;
                 game.roundFinished = true;
                 game.phase = 'results';
@@ -760,10 +754,6 @@ io.on('connection', (socket) => {
             }
         }
     }
-
-    // =====================================================
-    // FUNCIONES AUXILIARES
-    // =====================================================
 
     function validateAllAnswersLocal(game) {
         const results = {};
