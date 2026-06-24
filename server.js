@@ -120,7 +120,8 @@ io.on('connection', (socket) => {
             letterChoiceTimeout: null,
             roundFinished: false,
             votesProcessed: false,
-            resultsCalculated: false
+            resultsCalculated: false,
+            waitingForVotes: false
         };
 
         const game = games[gameId];
@@ -205,6 +206,7 @@ io.on('connection', (socket) => {
         game.roundFinished = false;
         game.votesProcessed = false;
         game.resultsCalculated = false;
+        game.waitingForVotes = false;
         
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
@@ -274,6 +276,7 @@ io.on('connection', (socket) => {
         game.processing = false;
         game.roundFinished = false;
         game.resultsCalculated = false;
+        game.waitingForVotes = false;
 
         game.players.forEach(p => {
             game.answers[p.id] = {
@@ -344,6 +347,7 @@ io.on('connection', (socket) => {
         game.roundFinished = false;
         game.pendingVotes = {};
         game.resultsCalculated = false;
+        game.waitingForVotes = false;
 
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
@@ -399,6 +403,7 @@ io.on('connection', (socket) => {
                 game.processing = false;
                 game.roundFinished = false;
                 game.resultsCalculated = false;
+                game.waitingForVotes = false;
 
                 game.players.forEach(p => {
                     game.answers[p.id] = {
@@ -446,7 +451,7 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase !== 'playing' || !game.roundActive) return;
-        if (game.processing) return;
+        if (game.processing || game.waitingForVotes) return;
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player) return;
@@ -469,6 +474,7 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
         if (game.phase !== 'playing' || !game.roundActive) return;
+        if (game.processing || game.waitingForVotes) return;
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player) return;
@@ -492,7 +498,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // NO establecer processing = true aquí
         playerAnswers.stopped = true;
         game.stopPlayer = player.id;
 
@@ -520,7 +525,6 @@ io.on('connection', (socket) => {
         const { gameId, playerId, word, category, vote } = data;
         const game = games[gameId];
         if (!game) return;
-
         if (!game.pendingVotes[word]) {
             game.pendingVotes[word] = {
                 category: category,
@@ -591,6 +595,7 @@ io.on('connection', (socket) => {
         
         if (allResolved && !game.votesProcessed) {
             game.votesProcessed = true;
+            game.waitingForVotes = false;
             
             io.to(gameId).emit('allVotesResolved', { success: true });
             io.to(gameId).emit('chatMessage', {
@@ -601,6 +606,7 @@ io.on('connection', (socket) => {
             
             console.log(`✅ Votaciones resueltas en sala ${gameId}`);
             
+            // Volver a llamar a finalizarRonda para procesar los resultados
             setTimeout(() => {
                 finalizarRonda(gameId);
             }, 1000);
@@ -619,9 +625,21 @@ io.on('connection', (socket) => {
 
         console.log(`📌 [1] finalizarRonda llamada para ronda ${game.roundNumber} en sala ${gameId}`);
 
-        // Si ya está procesando o ya terminó, salir
-        if (game.processing || game.roundFinished || game.resultsCalculated) {
-            console.log(`⚠️ Ronda ${game.roundNumber} ya está procesada o terminada (processing=${game.processing}, roundFinished=${game.roundFinished}, resultsCalculated=${game.resultsCalculated})`);
+        // Si ya terminó, salir
+        if (game.roundFinished || game.resultsCalculated) {
+            console.log(`⚠️ Ronda ${game.roundNumber} ya terminó`);
+            return;
+        }
+
+        // Si ya está procesando, salir
+        if (game.processing) {
+            console.log(`⚠️ Ronda ${game.roundNumber} ya está siendo procesada`);
+            return;
+        }
+
+        // Si está esperando votos, no hacer nada
+        if (game.waitingForVotes) {
+            console.log(`⏳ Ronda ${game.roundNumber} está esperando votaciones`);
             return;
         }
 
@@ -643,6 +661,7 @@ io.on('connection', (socket) => {
                 game.votesProcessed = false;
                 game.processing = false;
                 game.resultsCalculated = false;
+                game.waitingForVotes = true;
                 
                 wordsToVote.forEach(item => {
                     game.pendingVotes[item.word] = {
@@ -665,7 +684,7 @@ io.on('connection', (socket) => {
                     message: `📋 Iniciando votación para ${wordsToVote.length} palabras no encontradas`,
                     system: true
                 });
-                console.log(`📌 [7] Votación iniciada, saliendo`);
+                console.log(`📌 [7] Votación iniciada, saliendo (waitingForVotes=true)`);
                 return;
             }
 
@@ -719,6 +738,7 @@ io.on('connection', (socket) => {
                 game.roundFinished = true;
                 game.phase = 'results';
                 game.roundActive = false;
+                game.waitingForVotes = false;
                 clearInterval(game.timer);
                 
                 const emptyResults = game.players.filter(p => p.connected).map(p => ({
@@ -930,6 +950,7 @@ io.on('connection', (socket) => {
         game.resultsCalculated = false;
         game.pendingVotes = {};
         game.votesProcessed = false;
+        game.waitingForVotes = false;
         
         console.log(`▶️ Anfitrión avanza a siguiente ronda en sala ${gameId}`);
         startRound(gameId);
@@ -958,6 +979,7 @@ io.on('connection', (socket) => {
         game.gameStarted = false;
         game.roundActive = false;
         game.processing = false;
+        game.waitingForVotes = false;
 
         const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
         
@@ -1004,6 +1026,7 @@ io.on('connection', (socket) => {
         game.roundFinished = false;
         game.resultsCalculated = false;
         game.votesProcessed = false;
+        game.waitingForVotes = false;
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
             game.letterChoiceTimeout = null;
@@ -1137,7 +1160,8 @@ io.on('connection', (socket) => {
             alphabetComplete: game.alphabetComplete || false,
             processing: game.processing || false,
             roundFinished: game.roundFinished || false,
-            resultsCalculated: game.resultsCalculated || false
+            resultsCalculated: game.resultsCalculated || false,
+            waitingForVotes: game.waitingForVotes || false
         };
     }
 
