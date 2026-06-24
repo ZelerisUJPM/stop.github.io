@@ -211,7 +211,13 @@ io.on('connection', (socket) => {
             roundFinished: false,
             votesProcessed: false,
             resultsCalculated: false,
-            votingPlayers: []
+            votingPlayers: [],
+            // =============================================
+            // NUEVO: sistema de turnos para elegir letra
+            // =============================================
+            letterPickerIndex: 0, // Índice del jugador que elige la letra
+            choosingLetter: false,
+            chosenLetter: null
         };
 
         const game = games[gameId];
@@ -302,6 +308,9 @@ io.on('connection', (socket) => {
         game.votesProcessed = false;
         game.resultsCalculated = false;
         game.votingPlayers = [];
+        game.letterPickerIndex = 0;
+        game.choosingLetter = false;
+        game.chosenLetter = null;
         
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
@@ -310,34 +319,55 @@ io.on('connection', (socket) => {
             system: true
         });
 
+        // Iniciar la primera ronda
         setTimeout(() => {
             startRound(gameId);
         }, 2000);
     });
 
-    async function startRound(gameId) {
+    // =====================================================
+    // NUEVO: JUGADOR ELIGE LA LETRA
+    // =====================================================
+    socket.on('chooseLetter', (data) => {
+        const { gameId, letter } = data;
         const game = games[gameId];
         if (!game) return;
 
-        game.roundNumber++;
+        // Verificar que el juego esté en fase de elegir letra
+        if (game.phase !== 'choosing_letter') {
+            socket.emit('error', 'No es momento de elegir letra');
+            return;
+        }
+
+        // Verificar que el jugador que elige sea el que le toca
+        const activePlayers = game.players.filter(p => p.connected);
+        if (game.letterPickerIndex >= activePlayers.length) {
+            game.letterPickerIndex = 0;
+        }
+        const currentPicker = activePlayers[game.letterPickerIndex];
+        if (!currentPicker || currentPicker.id !== socket.id) {
+            socket.emit('error', 'No es tu turno para elegir la letra');
+            return;
+        }
+
+        // Validar que la letra sea válida (A-Z)
+        const cleanLetter = letter.toUpperCase().trim();
+        if (cleanLetter.length !== 1 || !LETTERS.includes(cleanLetter)) {
+            socket.emit('error', 'Debes elegir una letra válida (A-Z)');
+            return;
+        }
+
+        // Establecer la letra
+        game.currentLetter = cleanLetter;
+        game.chosenLetter = cleanLetter;
+        game.choosingLetter = false;
         game.phase = 'playing';
         game.roundActive = true;
+        game.timeLeft = game.timeLimit || 60;
         game.answers = {};
         game.stopPlayer = null;
-        game.timeLeft = game.timeLimit || 60;
-        game.waitingForNextRound = false;
-        game.pendingVotes = {};
-        game.voteResolved = false;
-        game.validationResults = null;
-        game.votesStarted = false;
-        game.roundFinished = false;
-        game.votesProcessed = false;
-        game.resultsCalculated = false;
-        game.votingPlayers = [];
 
-        const availableLetters = LETTERS.split('');
-        game.currentLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
-
+        // Inicializar respuestas de los jugadores
         game.players.forEach(p => {
             game.answers[p.id] = {
                 playerName: p.name,
@@ -347,20 +377,28 @@ io.on('connection', (socket) => {
             };
         });
 
-        io.to(gameId).emit('roundStarted', {
-            round: game.roundNumber,
-            letter: game.currentLetter,
-            categories: game.categories,
-            timeLimit: game.timeLimit
+        io.to(gameId).emit('letterChosen', {
+            letter: cleanLetter,
+            chosenBy: currentPicker.name,
+            round: game.roundNumber
         });
-        
-        io.to(gameId).emit('gameState', getGameState(gameId));
+
         io.to(gameId).emit('chatMessage', {
             player: 'Sistema',
-            message: `🔤 Ronda ${game.roundNumber} - Letra: ${game.currentLetter}`,
+            message: `🔤 ${currentPicker.name} eligió la letra: ${cleanLetter} - Ronda ${game.roundNumber}`,
             system: true
         });
 
+        io.to(gameId).emit('roundStarted', {
+            round: game.roundNumber,
+            letter: cleanLetter,
+            categories: game.categories,
+            timeLimit: game.timeLimit
+        });
+
+        io.to(gameId).emit('gameState', getGameState(gameId));
+
+        // Iniciar temporizador
         game.timer = setInterval(() => {
             game.timeLeft--;
             io.to(gameId).emit('timerUpdate', { timeLeft: game.timeLeft });
@@ -370,6 +408,105 @@ io.on('connection', (socket) => {
                 finishRound(gameId);
             }
         }, 1000);
+    });
+
+    // =====================================================
+    // FUNCIÓN PARA INICIAR RONDA (con elección de letra)
+    // =====================================================
+    function startRound(gameId) {
+        const game = games[gameId];
+        if (!game) return;
+
+        game.roundNumber++;
+        game.phase = 'choosing_letter'; // Fase de elegir letra
+        game.choosingLetter = true;
+        game.chosenLetter = null;
+        game.roundActive = false;
+        game.answers = {};
+        game.stopPlayer = null;
+        game.timeLeft = game.timeLimit || 60;
+
+        // Determinar quién elige la letra (turno rotativo)
+        const activePlayers = game.players.filter(p => p.connected);
+        if (game.letterPickerIndex >= activePlayers.length) {
+            game.letterPickerIndex = 0;
+        }
+        const currentPicker = activePlayers[game.letterPickerIndex];
+
+        // Avanzar el índice para la próxima ronda
+        game.letterPickerIndex = (game.letterPickerIndex + 1) % activePlayers.length;
+
+        io.to(gameId).emit('chooseLetter', {
+            round: game.roundNumber,
+            pickerName: currentPicker.name,
+            pickerId: currentPicker.id,
+            message: `🎯 ${currentPicker.name}, elige la letra para la ronda ${game.roundNumber}`
+        });
+
+        io.to(gameId).emit('chatMessage', {
+            player: 'Sistema',
+            message: `🎯 ${currentPicker.name}, elige la letra para la ronda ${game.roundNumber}`,
+            system: true
+        });
+
+        io.to(gameId).emit('gameState', getGameState(gameId));
+
+        // Dar 30 segundos para elegir letra, si no se elige, se asigna aleatoria
+        setTimeout(() => {
+            if (game.phase === 'choosing_letter' && game.choosingLetter) {
+                // Asignar letra aleatoria
+                const availableLetters = LETTERS.split('');
+                const randomLetter = availableLetters[Math.floor(Math.random() * availableLetters.length)];
+                game.currentLetter = randomLetter;
+                game.chosenLetter = randomLetter;
+                game.choosingLetter = false;
+                game.phase = 'playing';
+                game.roundActive = true;
+                game.timeLeft = game.timeLimit || 60;
+                game.answers = {};
+                game.stopPlayer = null;
+
+                game.players.forEach(p => {
+                    game.answers[p.id] = {
+                        playerName: p.name,
+                        answers: {},
+                        stopped: false,
+                        stoppedAt: null
+                    };
+                });
+
+                io.to(gameId).emit('letterChosen', {
+                    letter: randomLetter,
+                    chosenBy: 'Sistema (tiempo agotado)',
+                    round: game.roundNumber
+                });
+
+                io.to(gameId).emit('chatMessage', {
+                    player: 'Sistema',
+                    message: `⏰ Tiempo agotado. Letra asignada automáticamente: ${randomLetter}`,
+                    system: true
+                });
+
+                io.to(gameId).emit('roundStarted', {
+                    round: game.roundNumber,
+                    letter: randomLetter,
+                    categories: game.categories,
+                    timeLimit: game.timeLimit
+                });
+
+                io.to(gameId).emit('gameState', getGameState(gameId));
+
+                game.timer = setInterval(() => {
+                    game.timeLeft--;
+                    io.to(gameId).emit('timerUpdate', { timeLeft: game.timeLeft });
+                    
+                    if (game.timeLeft <= 0) {
+                        clearInterval(game.timer);
+                        finishRound(gameId);
+                    }
+                }, 1000);
+            }
+        }, 30000); // 30 segundos para elegir
     }
 
     socket.on('sendAnswer', (data) => {
@@ -456,7 +593,6 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) return;
 
-        // Inicializar votación para esta palabra si no existe
         if (!game.pendingVotes[word]) {
             game.pendingVotes[word] = {
                 category: category,
@@ -471,7 +607,6 @@ io.on('connection', (socket) => {
         const voteData = game.pendingVotes[word];
         if (voteData.resolved) return;
 
-        // Registrar voto del jugador
         if (!voteData.votes[playerId]) {
             voteData.votes[playerId] = vote;
             voteData.total++;
@@ -479,17 +614,14 @@ io.on('connection', (socket) => {
                 voteData.voters.push(playerId);
             }
         } else {
-            // Actualizar voto
             voteData.votes[playerId] = vote;
         }
 
-        // Calcular votos
         const votesFor = Object.values(voteData.votes).filter(v => v === true).length;
         const votesAgainst = Object.values(voteData.votes).filter(v => v === false).length;
         const totalVotes = Object.keys(voteData.votes).length;
         const activePlayers = game.players.filter(p => p.connected).length;
 
-        // Enviar progreso de votación
         io.to(gameId).emit('voteProgress', {
             word: word,
             votesFor: votesFor,
@@ -499,7 +631,6 @@ io.on('connection', (socket) => {
             voters: voteData.voters
         });
 
-        // Verificar si todos los jugadores votaron
         if (totalVotes >= activePlayers) {
             voteData.resolved = true;
             voteData.approved = votesFor > votesAgainst;
@@ -649,6 +780,8 @@ io.on('connection', (socket) => {
         game.phase = 'finished';
         game.gameStarted = false;
         game.roundActive = false;
+        game.choosingLetter = false;
+        game.phase = 'waiting';
 
         const winner = game.players.reduce((a, b) => a.score > b.score ? a : b);
         
@@ -711,7 +844,6 @@ io.on('connection', (socket) => {
             game.resultsCalculated = false;
             game.votingPlayers = [];
             
-            // Inicializar votaciones
             wordsToVote.forEach(item => {
                 game.pendingVotes[item.word] = {
                     category: item.category,
@@ -814,7 +946,6 @@ io.on('connection', (socket) => {
                 if (cat === 'NOMBRE' || cat === 'APELLIDO') {
                     const validation = validateWordLocal(answer, cat, game.currentLetter);
                     if (validation.valid) {
-                        // Si pasa la validación local, verificar con Datamuse
                         const datamuseResult = await validateWordWithDatamuse(answer);
                         results[`${player.id}_${cat}`] = {
                             playerId: player.id,
@@ -854,7 +985,6 @@ io.on('connection', (socket) => {
                 const answer = playerAnswers.answers[cat] || '';
                 const key = `${player.id}_${cat}`;
                 
-                // Verificar si esta palabra estaba en votación
                 const voteData = game.pendingVotes[answer];
                 if (voteData && voteData.resolved) {
                     results[key] = {
@@ -867,7 +997,6 @@ io.on('connection', (socket) => {
                         approved: voteData.approved
                     };
                 } else if (answer.length > 0) {
-                    // Si no estaba en votación, validar localmente
                     const validation = validateWordLocal(answer, cat, game.currentLetter);
                     results[key] = {
                         playerId: player.id,
@@ -1040,6 +1169,9 @@ io.on('connection', (socket) => {
         game.votesProcessed = false;
         game.resultsCalculated = false;
         game.votingPlayers = [];
+        game.letterPickerIndex = 0;
+        game.choosingLetter = false;
+        game.chosenLetter = null;
         clearInterval(game.timer);
 
         io.to(gameId).emit('gameState', getGameState(gameId));
@@ -1170,7 +1302,10 @@ io.on('connection', (socket) => {
             votesStarted: game.votesStarted,
             roundFinished: game.roundFinished,
             votesProcessed: game.votesProcessed,
-            resultsCalculated: game.resultsCalculated
+            resultsCalculated: game.resultsCalculated,
+            choosingLetter: game.choosingLetter,
+            chosenLetter: game.chosenLetter,
+            letterPickerIndex: game.letterPickerIndex
         };
     }
 
