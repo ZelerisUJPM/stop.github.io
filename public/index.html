@@ -507,7 +507,7 @@
                 </div>
 
                 <!-- ============================================= -->
-                <!-- SELECTOR DE LETRAS (aparece cuando toca elegir) -->
+                <!-- SELECTOR DE LETRAS -->
                 <!-- ============================================= -->
                 <div id="letterSelector" class="letter-selector hidden">
                     <h3>🔤 Elige la letra</h3>
@@ -646,6 +646,7 @@
         let isHost = false;
         let roundActive = false;
         let votingActive = false;
+        let isMyTurnToPick = false;
 
         // =============================================
         // CONSTRUIR SELECTOR DE LETRAS
@@ -661,6 +662,7 @@
                 btn.disabled = true;
                 btn.addEventListener('click', () => {
                     const letter = btn.dataset.letter;
+                    console.log(`🔤 Jugador eligió letra: ${letter}`);
                     if (socket && connected) {
                         socket.emit('chooseLetter', { gameId, letter });
                         // Deshabilitar todos los botones después de elegir
@@ -674,14 +676,16 @@
 
         // Mostrar selector de letras
         function showLetterSelector(data) {
+            console.log('📩 Mostrando selector:', data);
             letterSelector.classList.remove('hidden');
             pickerMessage.innerHTML = `🎯 <span class="highlight">${data.pickerName}</span>, elige la letra para la ronda ${data.round}`;
             letterTimer.textContent = '⏱️ Tienes 30 segundos';
 
             const isMyTurn = socket && data.pickerId === socket.id;
+            isMyTurnToPick = isMyTurn;
 
             // Habilitar/deshabilitar botones
-            document.querySelectorAll('.letter-btn').forEach((btn, index) => {
+            document.querySelectorAll('.letter-btn').forEach((btn) => {
                 btn.disabled = !isMyTurn;
                 if (isMyTurn) {
                     btn.classList.add('my-turn');
@@ -699,17 +703,18 @@
             // Temporizador visual (30 segundos)
             let timeLeft = 30;
             letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
-            const timerInterval = setInterval(() => {
+            if (window._letterTimerInterval) {
+                clearInterval(window._letterTimerInterval);
+            }
+            window._letterTimerInterval = setInterval(() => {
                 timeLeft--;
                 letterTimer.textContent = `⏱️ Tiempo restante: ${timeLeft}s`;
                 if (timeLeft <= 0) {
-                    clearInterval(timerInterval);
+                    clearInterval(window._letterTimerInterval);
+                    window._letterTimerInterval = null;
                     letterTimer.textContent = '⏰ Tiempo agotado. Letra asignada automáticamente.';
                 }
             }, 1000);
-
-            // Guardar el intervalo para limpiarlo después
-            window._letterTimerInterval = timerInterval;
         }
 
         // Ocultar selector de letras
@@ -720,6 +725,7 @@
                 window._letterTimerInterval = null;
             }
             letterTimer.textContent = '';
+            isMyTurnToPick = false;
         }
 
         // =============================================
@@ -1022,10 +1028,6 @@
 
             socket.on('gameState', (state) => {
                 updateGameUI(state);
-                // Si la fase es 'choosing_letter', mostrar el selector
-                if (state.phase === 'choosing_letter' && state.choosingLetter) {
-                    // El evento chooseLetter se encarga de mostrar el selector
-                }
             });
 
             socket.on('playersUpdate', (players) => {
@@ -1037,10 +1039,12 @@
             // EVENTOS PARA ELEGIR LETRA
             // =============================================
             socket.on('chooseLetter', (data) => {
+                console.log('📩 Evento chooseLetter recibido:', data);
                 showLetterSelector(data);
             });
 
             socket.on('letterChosen', (data) => {
+                console.log('📩 Evento letterChosen recibido:', data);
                 hideLetterSelector();
                 addChatMessage('Sistema', `🔤 ${data.chosenBy} eligió la letra: ${data.letter}`, true);
                 currentLetter.textContent = data.letter;
@@ -1244,6 +1248,9 @@
         renderPlayers([]);
         hostControls.classList.add('hidden');
         votingArea.classList.add('hidden');
+
+        // Log para depuración
+        console.log('🔄 STOP Online iniciado correctamente');
     })();
 </script>
 </body>
