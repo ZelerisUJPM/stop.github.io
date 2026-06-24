@@ -137,7 +137,10 @@ io.on('connection', (socket) => {
             pendingVotes: {},
             usedLetters: [],
             alphabetComplete: false,
-            isProcessing: false
+            isProcessing: false,
+            letterPickerIndex: 0,
+            choosingLetter: false,
+            letterChoiceTimeout: null
         };
 
         const game = games[gameId];
@@ -187,28 +190,52 @@ io.on('connection', (socket) => {
         });
     });
 
+    // =====================================================
+    // INICIAR PARTIDA
+    // =====================================================
     socket.on('startGame', (data) => {
         const { gameId } = data;
         const game = games[gameId];
-        if (!game) return;
+        if (!game) {
+            socket.emit('error', 'La sala no existe');
+            return;
+        }
 
         const player = game.players.find(p => p.id === socket.id);
         if (!player || !player.isHost) {
             socket.emit('error', 'Solo el anfitrión puede iniciar la partida');
             return;
         }
+
         if (game.players.length < 2) {
             socket.emit('error', 'Se necesitan al menos 2 jugadores');
             return;
         }
 
+        // Resetear estado
         game.gameStarted = true;
         game.roundNumber = 0;
         game.players.forEach(p => p.score = 0);
         game.usedLetters = [];
         game.alphabetComplete = false;
         game.isProcessing = false;
+        game.letterPickerIndex = 0;
+        game.choosingLetter = false;
+        game.answers = {};
+        game.stopPlayer = null;
+        game.roundActive = false;
+        game.currentLetter = '';
+        game.pendingVotes = {};
         
+        if (game.letterChoiceTimeout) {
+            clearTimeout(game.letterChoiceTimeout);
+            game.letterChoiceTimeout = null;
+        }
+        if (game.timer) {
+            clearInterval(game.timer);
+            game.timer = null;
+        }
+
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('chatMessage', {
             player: 'Sistema',
@@ -216,7 +243,10 @@ io.on('connection', (socket) => {
             system: true
         });
 
-        setTimeout(() => startRound(gameId), 2000);
+        // Iniciar primera ronda después de 1.5 segundos
+        setTimeout(() => {
+            startRound(gameId);
+        }, 1500);
     });
 
     // =====================================================
@@ -227,8 +257,10 @@ io.on('connection', (socket) => {
         const game = games[gameId];
         if (!game) { socket.emit('error', 'La sala no existe'); return; }
 
+        console.log(`📩 Recibida elección de letra: ${letter} en sala ${gameId}, fase: ${game.phase}`);
+
         if (game.phase !== 'choosing_letter') {
-            socket.emit('error', 'No es momento de elegir letra');
+            socket.emit('error', 'No es momento de elegir letra (fase: ' + game.phase + ')');
             return;
         }
 
@@ -310,8 +342,14 @@ io.on('connection', (socket) => {
     // =====================================================
     function startRound(gameId) {
         const game = games[gameId];
-        if (!game) return;
+        if (!game) {
+            console.log(`❌ Sala ${gameId} no encontrada`);
+            return;
+        }
 
+        console.log(`🔄 Iniciando ronda ${game.roundNumber + 1} en sala ${gameId}`);
+
+        // Verificar si el abecedario está completo
         if (game.usedLetters.length >= 26) {
             game.alphabetComplete = true;
             game.phase = 'finished';
@@ -345,6 +383,8 @@ io.on('connection', (socket) => {
         const currentPicker = activePlayers[game.letterPickerIndex];
         const availableLetters = LETTERS.split('').filter(l => !game.usedLetters.includes(l));
 
+        console.log(`🎯 Ronda ${game.roundNumber}: ${currentPicker.name} debe elegir letra. Disponibles: ${availableLetters.length}`);
+
         io.to(gameId).emit('chooseLetter', {
             round: game.roundNumber,
             pickerName: currentPicker.name,
@@ -355,8 +395,11 @@ io.on('connection', (socket) => {
 
         io.to(gameId).emit('gameState', getGameState(gameId));
 
+        // Timeout de 30 segundos para elegir letra
         game.letterChoiceTimeout = setTimeout(() => {
             if (game.phase === 'choosing_letter' && game.choosingLetter) {
+                console.log(`⏰ Tiempo agotado en sala ${gameId}, asignando letra aleatoria`);
+                
                 const available = LETTERS.split('').filter(l => !game.usedLetters.includes(l));
                 if (available.length === 0) {
                     game.alphabetComplete = true;
@@ -662,6 +705,11 @@ io.on('connection', (socket) => {
         }
 
         game.isProcessing = false;
+        game.resultsCalculated = false;
+        game.roundFinished = false;
+        game.votesProcessed = false;
+        game.pendingVotes = {};
+        
         startRound(gameId);
     });
 
@@ -1028,11 +1076,17 @@ io.on('connection', (socket) => {
         game.usedLetters = [];
         game.alphabetComplete = false;
         game.isProcessing = false;
+        game.letterPickerIndex = 0;
+        game.choosingLetter = false;
+        game.currentLetter = '';
         if (game.letterChoiceTimeout) {
             clearTimeout(game.letterChoiceTimeout);
             game.letterChoiceTimeout = null;
         }
-        clearInterval(game.timer);
+        if (game.timer) {
+            clearInterval(game.timer);
+            game.timer = null;
+        }
 
         io.to(gameId).emit('gameState', getGameState(gameId));
         io.to(gameId).emit('gameReset', { success: true });
